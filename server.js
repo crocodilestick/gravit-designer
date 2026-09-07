@@ -3,6 +3,7 @@ const path = require("path");
 const http = require("http");
 const { setupWebSocket } = require("./routes/ws");
 const userRoutes = require("./routes/user");
+const fileRoutes = require("./routes/files");
 
 const app = express();
 const port = process.env.PORT || 3100;
@@ -80,10 +81,8 @@ app.get("/pro/paywall/:page", (_req, res) => {
   res.send("");
 });
 
-// File listing
-app.get("/file", (_req, res) => {
-  res.json([]);
-});
+// File storage (list/create/read/update/delete projects, backed by PROJECTS_DIR)
+app.use(fileRoutes);
 
 // Catch /null requests (client bug sends null URL)
 app.get("/null", (_req, res) => {
