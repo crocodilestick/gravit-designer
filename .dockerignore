@@ -5,3 +5,4 @@ reverse-engineering
 .github
 projects
 *.log
+docker-compose-personal.yml

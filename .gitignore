@@ -39,7 +39,7 @@ coverage/
 
 # Local project storage (see PROJECTS_DIR)
 /projects/
-
+docker-compose-personal.yml
 
 # Build output
 releases/

@@ -1,5 +1,7 @@
 services:
   gravit-designer:
+    container_name: gravit
+    image: crocodilestick/gravitdesigner:latest
     build: .
     ports:
       - "3100:3100"
@@ -7,5 +9,5 @@ services:
       - PORT=3100
       - PROJECTS_DIR=/data/projects
     volumes:
-      - ./projects:/data/projects
+      - /docker/gravit/projects:/data/projects
     restart: unless-stopped
