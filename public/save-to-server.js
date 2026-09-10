@@ -73,14 +73,24 @@
       overlay.appendChild(box);
       document.body.appendChild(overlay);
 
+      // ctx.onClose lets content register cleanup (e.g. aborting an
+      // in-flight request) that runs when the modal is dismissed.
+      const ctx = { onClose: null };
       function close(result) {
+        if (typeof ctx.onClose === "function") {
+          try {
+            ctx.onClose();
+          } catch (err) {
+            console.warn("[save-to-server] modal onClose threw", err);
+          }
+        }
         overlay.remove();
         resolve(result);
       }
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) close(null);
       });
-      contentBuilder(box, close);
+      contentBuilder(box, close, ctx);
     });
   }
 
@@ -132,7 +142,7 @@
 
   // Lists server files (GET /file) and lets the user pick one to open.
   function browseServerFiles() {
-    return openModal(async (box, close) => {
+    return openModal(async (box, close, ctx) => {
       box.style.minWidth = "480px";
       const h = document.createElement("div");
       h.textContent = "Open from Server";
@@ -151,12 +161,43 @@
       footer.appendChild(closeBtn);
       box.appendChild(footer);
 
+      // Abort the listing if the dialog is closed, and give up after a
+      // while rather than sitting on "Loading..." forever. Opening this
+      // repeatedly used to leave each previous fetch running against the
+      // browser's per-origin connection limit; now closing cancels.
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      ctx.onClose = () => controller.abort();
+
       let files;
+      const startedAt = Date.now();
       try {
-        files = await fetch("/file").then((r) => r.json());
+        files = await fetch("/file", { signal: controller.signal }).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        });
+        const elapsed = Date.now() - startedAt;
+        if (elapsed > 1000) {
+          console.warn(`[save-to-server] listing took ${elapsed}ms`);
+        }
       } catch (err) {
-        list.textContent = `Failed to load files: ${err && err.message ? err.message : err}`;
+        if (controller.signal.aborted && !document.body.contains(box)) return;
+        list.textContent = "";
+        const msg = document.createElement("div");
+        msg.style.cssText = "margin-bottom:12px;";
+        msg.textContent = controller.signal.aborted
+          ? "Timed out listing server files."
+          : `Failed to load files: ${err && err.message ? err.message : err}`;
+        const retry = styledButton("Retry", true);
+        retry.onclick = () => {
+          close(null);
+          browseServerFiles();
+        };
+        list.appendChild(msg);
+        list.appendChild(retry);
         return;
+      } finally {
+        clearTimeout(timeout);
       }
       files = (files || []).filter((f) => !f.trashed);
       list.innerHTML = "";
@@ -680,15 +721,24 @@
   // The File menu needs no polling — it goes in through the init hook
   // installed above, before the menu is ever built. This loop covers the
   // pieces that genuinely have to wait for runtime objects to appear.
+  //
+  // It backs off rather than running forever: installWelcomeScreenOption()
+  // does a document-wide jQuery query, and at 250ms that was four full DOM
+  // searches a second for the lifetime of the tab. The welcome dialog can
+  // be rebuilt (so this can't simply stop once it has run), but polling it
+  // every 2s once everything is installed is plenty.
   let documentPatched = false;
-  let welcomeOptionAdded = false;
-  setInterval(() => {
-    installExecuteActionOverride();
+  let pollDelay = 250;
+  function pollOnce() {
+    const actionInstalled = installExecuteActionOverride();
     documentPatched = documentPatched || tryPatchActiveDocument();
-    // Not latched: the welcome dialog can be rebuilt, and the helper
-    // no-ops when our entry is already present.
-    welcomeOptionAdded = installWelcomeScreenOption() || welcomeOptionAdded;
-  }, 250);
+    const welcomeAdded = installWelcomeScreenOption();
+    if (actionInstalled && documentPatched && welcomeAdded && pollDelay < 2000) {
+      pollDelay = 2000; // everything installed — drop to a slow watch
+    }
+    setTimeout(pollOnce, pollDelay);
+  }
+  setTimeout(pollOnce, pollDelay);
 
   // Periodic autosave-to-server. The app's own native autosave loop
   // explicitly skips any document where canSaveToCloud() is false (see
