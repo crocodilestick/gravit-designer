@@ -406,78 +406,56 @@
   };
 
   // The File menu is built by Je.prototype._createMainMenu (Je = the
-  // gDesigner class), which is NOT hand-written markup — it walks
-  // gDesigner._actions, groups each by action.getCategory()/getGroup(),
-  // and renders every item through the same code (addMenuItem, reading
-  // getTitle()/getIcon()/isEnabled()/etc off each action). Two earlier
-  // attempts assumed otherwise (once guessing this menu used hardcoded
-  // captions, once trying to inject raw <li> markup by hand) and both
-  // were wrong — DOM-level insertion is invisible to this menu's own
-  // hover/click handling, which is driven by its internal items array,
-  // not the DOM. Confirmed the real mechanism instead: the button that
-  // opens the menu calls its factory function fresh on every mousedown
-  // (see the "gmenubutton" jQuery plugin), so _createMainMenu — and the
-  // walk over gDesigner._actions — reruns on every single open. Actions
-  // registered into gDesigner._actions before that point render exactly
-  // like real ones automatically: no menu-DOM code of our own needed.
+  // gDesigner class). It is not hand-written markup: it walks
+  // gDesigner._actions, groups each entry by getCategory()/getGroup(),
+  // and renders every item through one code path that reads
+  // getTitle()/getIcon()/isEnabled()/... off the action object. So the
+  // way to add an item is to add an action, not to touch the DOM (raw
+  // <li> insertion was tried and is invisible to the menu's own
+  // hover/click handling, which is driven by its internal items array).
+  //
+  // The catch is timing. _createMainMenu() is called exactly once:
+  //
+  //     this._actions = gravit.actions.map(...)
+  //     this._createMainMenu()          <- once, during gDesigner.init()
+  //
+  // so pushing into gDesigner._actions after startup is always too late,
+  // which is why the previous attempt registered without ever appearing.
+  // The action has to be in the global `gravit.actions` array *before*
+  // gDesigner.init() runs.
+  //
+  // The app provides exactly that seam. Right after building `gravit`
+  // and immediately before gDesigner.init(), it calls out to optional
+  // globals if they are defined:
+  //
+  //     "function" == typeof window.gdb_initsetupsystemdateaction &&
+  //       window.gdb_initsetupsystemdateaction(window.gravit.actions),
+  //
+  // That whole block sits after `await new Promise(e => gContainer
+  // .initLanguage(e))`, so it necessarily runs after every synchronous
+  // script tag — defining the hook at load time below is always in time.
+  // Of the four such hooks this is the only one not additionally gated
+  // on beta/RC flags, so it is the one that reliably fires.
   //
   // getTitle() must return a real GLocaleKey (GLocale.get() is called on
-  // it directly), not a string — grabbed at runtime off any real action
-  // rather than guessed at. getCategory()/getGroup() are borrowed by
-  // reference from a real neighboring action (GOpenAction for "Open...",
-  // the GVDESIGN Save-As entry for "Save...") so our items land in the
-  // exact same menu groups without needing to reverse-engineer the
-  // category tree ourselves. Titles reuse the GGravitCloudAction locale
-  // keys already renamed for the rebrand above.
-  // Primary lookup is by action id, taken straight from the source:
-  // GOpenAction.ID === "file.open", GSaveAsAction.ID === "file.save-as"
-  // (per-format variants are `file.save-as.<ext>`, so the native format's
-  // is "file.save-as.gvdesign"). Searching _actions directly rather than
-  // _actionsMap, because _actionsMap is only filled in as a side effect of
-  // _createMainMenu's walk and so may still be empty this early.
-  function findActionById(id) {
-    const actions = window.gDesigner.getActions ? window.gDesigner.getActions() : null;
-    if (!actions) return null;
-    for (const action of actions) {
+  // it directly), not a string, so the class is taken off a real action's
+  // title rather than guessed at. getCategory()/getGroup() are borrowed
+  // by reference from the real neighbouring actions — file.open for
+  // "Open...", file.save-as.gvdesign for "Save..." (ids straight from the
+  // source: GOpenAction.ID, GSaveAsAction.ID + "." + ext) — so our items
+  // land in the same menu groups without reconstructing the category tree.
+  function findActionIn(actions, id) {
+    for (const action of actions || []) {
       try {
         if (action.getId() === id) return action;
       } catch (err) {
         // Skip anything that can't report its id.
       }
     }
-    const mapped = window.gDesigner._actionsMap && window.gDesigner._actionsMap[id];
-    return mapped || null;
-  }
-
-  function findActionByTitleKey(namespace, key) {
-    const actions = window.gDesigner.getActions ? window.gDesigner.getActions() : null;
-    if (!actions) return null;
-    for (const action of actions) {
-      try {
-        const title = action.getTitle();
-        if (
-          title &&
-          typeof title.getClassReference === "function" &&
-          title.getClassReference() === namespace &&
-          (key == null || title.getKey() === key)
-        ) {
-          return action;
-        }
-      } catch (err) {
-        // Some actions may throw building a title outside their normal
-        // context — irrelevant to finding our reference, skip.
-      }
-    }
     return null;
   }
 
-  // GLocale.get() is called on whatever getTitle() returns, so it has to be
-  // a real GLocaleKey, not a string. Rather than hardcode the class (it
-  // lives inside the webpack bundle with no global export), take it off any
-  // real action's title — every action class builds one the same way,
-  // e.g. GOpenAction.TITLE = new GLocaleKey("GOpenAction", "title").
-  function getGLocaleKeyClass() {
-    const actions = window.gDesigner.getActions ? window.gDesigner.getActions() : [];
+  function getGLocaleKeyClassFrom(actions) {
     for (const action of actions || []) {
       try {
         const title = action.getTitle();
@@ -529,84 +507,90 @@
     return fake;
   }
 
-  // Reports, once, exactly what the action registry actually looks like at
-  // runtime. Previous rounds failed silently here and left nothing to
-  // diagnose from; this makes the reason visible in the console instead of
-  // guessing at it.
-  let registerAttempts = 0;
-  function logActionRegistryDiagnostics() {
-    const g = window.gDesigner;
-    console.warn("[save-to-server] DIAGNOSTIC: could not find reference actions");
-    console.warn("  gDesigner present:", !!g);
-    if (!g) return;
-    console.warn("  _actions is array:", Array.isArray(g._actions), "length:", g._actions && g._actions.length);
-    console.warn("  _actionsMap keys:", g._actionsMap ? Object.keys(g._actionsMap).length : "(none)");
-    const actions = g.getActions ? g.getActions() : [];
-    console.warn("  sample of first 5 actions:");
-    (actions || []).slice(0, 5).forEach((a, idx) => {
-      let id, title, titleType, ref, key;
-      try { id = a.getId && a.getId(); } catch (e) { id = "<getId threw>"; }
-      try {
-        title = a.getTitle && a.getTitle();
-        titleType = typeof title;
-        ref = title && title.getClassReference ? title.getClassReference() : "(no getClassReference)";
-        key = title && title.getKey ? title.getKey() : "(no getKey)";
-      } catch (e) {
-        titleType = "<getTitle threw: " + e.message + ">";
-      }
-      console.warn(`    [${idx}] id=${id} titleType=${titleType} classRef=${ref} key=${key}`);
-    });
-    const ids = (actions || []).map((a) => { try { return a.getId(); } catch (e) { return null; } });
-    console.warn("  is 'file.open' among action ids:", ids.indexOf("file.open"));
-    console.warn("  ids containing 'save':", ids.filter((i) => i && i.indexOf("save") !== -1).slice(0, 15));
-  }
-
-  function registerFileMenuActions() {
-    if (!window.gDesigner || !window.gDesigner._actions || !window.gDesigner._actionsMap) {
+  function addServerActionsTo(actions) {
+    if (!Array.isArray(actions)) {
+      console.warn("[save-to-server] action hook got a non-array", actions);
       return false;
     }
-    if (window.gDesigner.__saveToServerActionsRegistered) return true;
-    const openRef =
-      findActionById("file.open") || findActionByTitleKey("GOpenAction");
+    if (findActionIn(actions, "gravit-cloud.open")) return true; // already added
+    const openRef = findActionIn(actions, "file.open");
     const saveAsRef =
-      findActionById("file.save-as.gvdesign") ||
-      findActionById("file.save-as") ||
-      findActionByTitleKey("GDocument", "title.save-gvdesign");
-    const GLocaleKeyClass = getGLocaleKeyClass();
+      findActionIn(actions, "file.save-as.gvdesign") ||
+      findActionIn(actions, "file.save-as");
+    const GLocaleKeyClass = getGLocaleKeyClassFrom(actions);
     if (!openRef || !saveAsRef || !GLocaleKeyClass) {
-      registerAttempts++;
-      if (registerAttempts === 12) {
-        // ~3s in, once: report which of the three is missing plus a dump of
-        // the registry, so a failure here is diagnosable instead of silent.
-        console.warn(
-          "[save-to-server] missing:",
-          !openRef ? "openRef " : "",
-          !saveAsRef ? "saveAsRef " : "",
-          !GLocaleKeyClass ? "GLocaleKeyClass" : "",
-        );
-        logActionRegistryDiagnostics();
-      }
-      return false; // not built yet — retry next tick
+      console.warn(
+        "[save-to-server] cannot add File menu items — missing:",
+        !openRef ? "file.open " : "",
+        !saveAsRef ? "file.save-as.gvdesign " : "",
+        !GLocaleKeyClass ? "GLocaleKey" : "",
+        "| action count:",
+        actions.length,
+      );
+      return false;
     }
-
-    const newActions = [
+    actions.push(
       makeServerAction("gravit-cloud.open", "title.open", openRef, GLocaleKeyClass),
       makeServerAction("gravit-cloud.save", "title.save", saveAsRef, GLocaleKeyClass),
       makeServerAction("gravit-cloud.save-as", "title.save-as", saveAsRef, GLocaleKeyClass),
-    ];
-    newActions.forEach((action) => {
-      if (window.gDesigner._actionsMap[action.getId()]) return;
-      window.gDesigner._actions.push(action);
-      window.gDesigner._actionsMap[action.getId()] = action;
-    });
-    window.gDesigner.__saveToServerActionsRegistered = true;
-    console.log(
-      "[save-to-server] File menu actions registered (refs:",
-      openRef.getId(),
-      "/",
-      saveAsRef.getId(),
-      ")",
     );
+    console.log("[save-to-server] File menu actions added to gravit.actions");
+    return true;
+  }
+
+  // Installed synchronously at load, well before the app calls it.
+  const previousInitHook = window.gdb_initsetupsystemdateaction;
+  window.gdb_initsetupsystemdateaction = function (actions) {
+    if (typeof previousInitHook === "function") {
+      try {
+        previousInitHook(actions);
+      } catch (err) {
+        console.warn("[save-to-server] pre-existing init hook threw", err);
+      }
+    }
+    try {
+      addServerActionsTo(actions);
+    } catch (err) {
+      console.error("[save-to-server] failed adding File menu actions", err);
+    }
+  };
+
+  // Welcome screen ("New Document" dialog). Its sidebar entries are built
+  // by that dialog's own _createSeparator(container, cssClass) /
+  // _createOption(container, title, subtitle, cssClass, onClick) — the
+  // same pair the real "Open from Computer" entry is built with:
+  //
+  //     this._createSeparator(s, "local-option"),
+  //     this._createOption(s, GLocale.get(...), GLocale.get(...),
+  //                        "local-option", callback)
+  //
+  // There is no cloud entry to re-label here: this build simply never
+  // creates one (the locale strings exist, the markup does not). So we add
+  // one through those same two methods on the live dialog instance, which
+  // gDesigner keeps at _newDocumentDialog.
+  function installWelcomeScreenOption() {
+    const $ = window.$;
+    const dialog = window.gDesigner && window.gDesigner._newDocumentDialog;
+    if (!$ || !dialog || typeof dialog._createOption !== "function") return false;
+    const container = $(".g-new-document-dialog .sidebar-options");
+    if (!container.length) return false;
+    if (container.find(".option.server-option").length) return true; // already there
+    if (typeof dialog._createSeparator === "function") {
+      dialog._createSeparator(container, "server-option");
+    }
+    dialog._createOption(
+      container,
+      "Open from Server",
+      "Open and manage your server files",
+      "server-option",
+      () => {
+        if (typeof window.gDesigner.closeNewDocumentDialog === "function") {
+          window.gDesigner.closeNewDocumentDialog();
+        }
+        browseServerFiles();
+      },
+    );
+    console.log("[save-to-server] welcome screen option added");
     return true;
   }
 
@@ -693,15 +677,17 @@
     return patchedDoc && patchedItem;
   }
 
+  // The File menu needs no polling — it goes in through the init hook
+  // installed above, before the menu is ever built. This loop covers the
+  // pieces that genuinely have to wait for runtime objects to appear.
   let documentPatched = false;
-  let fileMenuActionsRegistered = false;
-  const poll = setInterval(() => {
-    const actionInstalled = installExecuteActionOverride();
+  let welcomeOptionAdded = false;
+  setInterval(() => {
+    installExecuteActionOverride();
     documentPatched = documentPatched || tryPatchActiveDocument();
-    fileMenuActionsRegistered = fileMenuActionsRegistered || registerFileMenuActions();
-    if (actionInstalled && documentPatched && fileMenuActionsRegistered) {
-      clearInterval(poll);
-    }
+    // Not latched: the welcome dialog can be rebuilt, and the helper
+    // no-ops when our entry is already present.
+    welcomeOptionAdded = installWelcomeScreenOption() || welcomeOptionAdded;
   }, 250);
 
   // Periodic autosave-to-server. The app's own native autosave loop
