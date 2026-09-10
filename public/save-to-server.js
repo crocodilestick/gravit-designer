@@ -548,6 +548,28 @@
     return fake;
   }
 
+  // Position matters: _createMainMenu renders in gravit.actions order, so
+  // appending puts our entries at the very bottom of the File menu. Each
+  // one is spliced in directly after its local counterpart instead, and
+  // borrows getCategory()/getGroup() from that same neighbour so it joins
+  // that group rather than starting a new one (the menu inserts a divider
+  // wherever consecutive items disagree on group).
+  function insertActionAfter(actions, afterId, action) {
+    const idx = actions.findIndex((a) => {
+      try {
+        return a.getId() === afterId;
+      } catch (err) {
+        return false;
+      }
+    });
+    if (idx === -1) {
+      actions.push(action);
+      return false;
+    }
+    actions.splice(idx + 1, 0, action);
+    return true;
+  }
+
   function addServerActionsTo(actions) {
     if (!Array.isArray(actions)) {
       console.warn("[save-to-server] action hook got a non-array", actions);
@@ -555,27 +577,44 @@
     }
     if (findActionIn(actions, "gravit-cloud.open")) return true; // already added
     const openRef = findActionIn(actions, "file.open");
-    const saveAsRef =
+    // "Save" (file.save) is the neighbour our two save entries sit under,
+    // so group with it; fall back to the Save As entry if it is absent.
+    const saveRef =
+      findActionIn(actions, "file.save") ||
       findActionIn(actions, "file.save-as.gvdesign") ||
       findActionIn(actions, "file.save-as");
     const GLocaleKeyClass = getGLocaleKeyClassFrom(actions);
-    if (!openRef || !saveAsRef || !GLocaleKeyClass) {
+    if (!openRef || !saveRef || !GLocaleKeyClass) {
       console.warn(
         "[save-to-server] cannot add File menu items — missing:",
         !openRef ? "file.open " : "",
-        !saveAsRef ? "file.save-as.gvdesign " : "",
+        !saveRef ? "file.save " : "",
         !GLocaleKeyClass ? "GLocaleKey" : "",
         "| action count:",
         actions.length,
       );
       return false;
     }
-    actions.push(
+
+    insertActionAfter(
+      actions,
+      "file.open",
       makeServerAction("gravit-cloud.open", "title.open", openRef, GLocaleKeyClass),
-      makeServerAction("gravit-cloud.save", "title.save", saveAsRef, GLocaleKeyClass),
-      makeServerAction("gravit-cloud.save-as", "title.save-as", saveAsRef, GLocaleKeyClass),
     );
-    console.log("[save-to-server] File menu actions added to gravit.actions");
+    // Save As is inserted first so that, both being placed directly after
+    // file.save, the final order reads Save / Save to Server / Save to
+    // Server as...
+    insertActionAfter(
+      actions,
+      "file.save",
+      makeServerAction("gravit-cloud.save-as", "title.save-as", saveRef, GLocaleKeyClass),
+    );
+    insertActionAfter(
+      actions,
+      "file.save",
+      makeServerAction("gravit-cloud.save", "title.save", saveRef, GLocaleKeyClass),
+    );
+    console.log("[save-to-server] File menu actions inserted into gravit.actions");
     return true;
   }
 
