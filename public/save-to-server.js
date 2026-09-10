@@ -140,14 +140,47 @@
     });
   }
 
-  // Lists server files (GET /file) and lets the user pick one to open.
+  // A destructive-action confirmation. Resolves true only on an explicit
+  // click of the confirm button; backdrop dismissal resolves null.
+  function confirmDialog(message, confirmLabel) {
+    return openModal((box, close) => {
+      const text = document.createElement("div");
+      text.textContent = message;
+      text.style.cssText = "margin-bottom:18px;line-height:1.5;";
+
+      const buttons = document.createElement("div");
+      buttons.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
+      const cancelBtn = styledButton("Cancel", false);
+      const okBtn = styledButton(confirmLabel || "Confirm", true);
+      okBtn.style.background = "#c0392b"; // destructive
+      cancelBtn.onclick = () => close(false);
+      okBtn.onclick = () => close(true);
+
+      buttons.appendChild(cancelBtn);
+      buttons.appendChild(okBtn);
+      box.appendChild(text);
+      box.appendChild(buttons);
+      setTimeout(() => cancelBtn.focus(), 0); // default to the safe option
+    });
+  }
+
+  // Lists server files (GET /file) with live filtering, and lets the user
+  // open or delete one.
   function browseServerFiles() {
     return openModal(async (box, close, ctx) => {
-      box.style.minWidth = "480px";
+      box.style.minWidth = "520px";
       const h = document.createElement("div");
       h.textContent = "Open from Server";
       h.style.cssText = "font-size:15px;font-weight:600;margin-bottom:12px;";
       box.appendChild(h);
+
+      const search = document.createElement("input");
+      search.type = "text";
+      search.placeholder = "Search files...";
+      search.style.cssText =
+        "width:100%;box-sizing:border-box;padding:8px;border-radius:4px;border:1px solid #555;background:#1e1e1e;color:#eee;font-size:13px;margin-bottom:12px;";
+      search.style.display = "none"; // shown once the listing arrives
+      box.appendChild(search);
 
       const list = document.createElement("div");
       list.textContent = "Loading…";
@@ -199,41 +232,106 @@
       } finally {
         clearTimeout(timeout);
       }
+
       files = (files || []).filter((f) => !f.trashed);
-      list.innerHTML = "";
-      if (!files.length) {
-        list.textContent = "No files saved to the server yet.";
-        return;
-      }
       files.sort(
         (a, b) =>
           new Date(b.updated || b.modifiedTime || 0) -
           new Date(a.updated || a.modifiedTime || 0),
       );
-      files.forEach((file) => {
+
+      function buildRow(file) {
+        const name = file.name || "Untitled";
         const row = document.createElement("div");
         row.style.cssText =
-          "padding:10px;border-radius:4px;cursor:pointer;display:flex;justify-content:space-between;gap:12px;";
+          "padding:8px 10px;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:12px;";
         row.onmouseenter = () => {
           row.style.background = "rgba(255,255,255,0.08)";
         };
         row.onmouseleave = () => {
           row.style.background = "transparent";
         };
-        const name = document.createElement("div");
-        name.textContent = file.name || "Untitled";
-        const date = document.createElement("div");
-        date.style.cssText = "color:#999;font-size:12px;white-space:nowrap;";
+
+        const nameEl = document.createElement("div");
+        nameEl.textContent = name;
+        nameEl.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+
+        const dateEl = document.createElement("div");
+        dateEl.style.cssText = "color:#999;font-size:12px;white-space:nowrap;";
         const when = file.updated || file.modifiedTime;
-        date.textContent = when ? new Date(when).toLocaleString() : "";
-        row.appendChild(name);
-        row.appendChild(date);
+        dateEl.textContent = when ? new Date(when).toLocaleString() : "";
+
+        const del = document.createElement("button");
+        del.type = "button";
+        del.title = `Delete "${name}" from the server`;
+        del.textContent = "Delete";
+        del.style.cssText =
+          "flex:none;padding:4px 10px;border-radius:4px;border:1px solid #666;background:transparent;color:#ddd;font-size:12px;cursor:pointer;";
+        del.onmouseenter = () => {
+          del.style.background = "#c0392b";
+          del.style.borderColor = "#c0392b";
+          del.style.color = "#fff";
+        };
+        del.onmouseleave = () => {
+          del.style.background = "transparent";
+          del.style.borderColor = "#666";
+          del.style.color = "#ddd";
+        };
+        del.onclick = async (e) => {
+          // Don't let the click fall through to the row and open the file.
+          e.stopPropagation();
+          const confirmed = await confirmDialog(
+            `Delete "${name}" from the server? This permanently removes the file and cannot be undone.`,
+            "Delete",
+          );
+          if (confirmed !== true) return;
+          try {
+            const res = await fetch(`/file/${file.id}`, { method: "DELETE" });
+            // 404 means it is already gone, which is the desired end state.
+            if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+            files = files.filter((f) => f.id !== file.id);
+            renderList();
+            showToast(`Deleted "${name}" from the server`);
+          } catch (err) {
+            showToast(
+              `Couldn't delete "${name}": ${err && err.message ? err.message : err}`,
+              true,
+            );
+          }
+        };
+
+        row.appendChild(nameEl);
+        row.appendChild(dateEl);
+        row.appendChild(del);
         row.onclick = () => {
           close(null);
           openServerFile(file);
         };
-        list.appendChild(row);
-      });
+        return row;
+      }
+
+      function renderList() {
+        const query = search.value.trim().toLowerCase();
+        list.innerHTML = "";
+        if (!files.length) {
+          search.style.display = "none";
+          list.textContent = "No files saved to the server yet.";
+          return;
+        }
+        search.style.display = "";
+        const shown = query
+          ? files.filter((f) => (f.name || "").toLowerCase().includes(query))
+          : files;
+        if (!shown.length) {
+          list.textContent = `No files match "${search.value.trim()}".`;
+          return;
+        }
+        shown.forEach((file) => list.appendChild(buildRow(file)));
+      }
+
+      search.addEventListener("input", renderList);
+      renderList();
+      if (files.length) search.focus();
     });
   }
 
