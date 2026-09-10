@@ -510,7 +510,7 @@
     return null;
   }
 
-  function makeServerAction(id, titleKey, referenceAction, GLocaleKeyClass) {
+  function makeServerAction(id, titleKey, referenceAction, GLocaleKeyClass, onExecute) {
     const fake = Object.create(Object.getPrototypeOf(referenceAction));
     Object.assign(fake, {
       getId: () => id,
@@ -539,11 +539,16 @@
       // runs a real action's logic against an object lacking its state.
       getAdditionalShortcuts: () => null,
       isKeyBoardEventRequiredToExecute: () => false,
-      // Routes through the executeAction override above regardless of
-      // whether the menu calls executeAction(id) or action.execute()
-      // directly — both converge on the exact same, already-proven logic.
-      execute: () => window.gDesigner.executeAction(id),
-      executeFromShortcut: () => window.gDesigner.executeAction(id),
+      // Menu items invoke their action via this._action.execute()
+      // directly (see Je.addMenuItem -> GMenuItem.setAction), not via
+      // gDesigner.executeAction(id), so the handler is passed in rather
+      // than dispatched by id. That distinction matters: the native
+      // toolbar save path dispatches 'gravit-cloud.save-as' for every
+      // save, so ACTION_HANDLERS has to treat that id as a plain save —
+      // but our own "Save to Server as..." menu entry genuinely means
+      // Save As. Routing by id collapsed the two together.
+      execute: onExecute,
+      executeFromShortcut: onExecute,
     });
     return fake;
   }
@@ -599,7 +604,9 @@
     insertActionAfter(
       actions,
       "file.open",
-      makeServerAction("gravit-cloud.open", "title.open", openRef, GLocaleKeyClass),
+      makeServerAction("gravit-cloud.open", "title.open", openRef, GLocaleKeyClass, () =>
+        browseServerFiles(),
+      ),
     );
     // Save As is inserted first so that, both being placed directly after
     // file.save, the final order reads Save / Save to Server / Save to
@@ -607,12 +614,16 @@
     insertActionAfter(
       actions,
       "file.save",
-      makeServerAction("gravit-cloud.save-as", "title.save-as", saveRef, GLocaleKeyClass),
+      makeServerAction("gravit-cloud.save-as", "title.save-as", saveRef, GLocaleKeyClass, () =>
+        saveActiveDocumentToServer({ forceSaveAs: true }),
+      ),
     );
     insertActionAfter(
       actions,
       "file.save",
-      makeServerAction("gravit-cloud.save", "title.save", saveRef, GLocaleKeyClass),
+      makeServerAction("gravit-cloud.save", "title.save", saveRef, GLocaleKeyClass, () =>
+        saveActiveDocumentToServer({ forceSaveAs: false }),
+      ),
     );
     console.log("[save-to-server] File menu actions inserted into gravit.actions");
     return true;
