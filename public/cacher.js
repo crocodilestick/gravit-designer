@@ -5045,7 +5045,6 @@ if (workbox) {
         revision: "b4078b49bbab13cd034125cf7a9d03b9_8795",
         url: "static.maintenance.js",
       },
-      { revision: "d81e8fe30de861acb21a782321f14fe1_8795", url: "index.html" },
       {
         revision: "e29764b039e88805ad3a4fcf5590e36d_8795",
         url: "manifest.json",
@@ -5060,6 +5059,24 @@ if (workbox) {
       // Ignore all URL parameters.
       ignoreURLParametersMatching: [/.*/],
     },
+  );
+
+  // index.html is deliberately NOT in the list above. Precaching it meant
+  // Workbox answered every navigation from the cached copy and only
+  // re-fetched when that entry's revision string changed — so any deploy
+  // that edited index.html without someone also bumping the revision by
+  // hand left the browser pinned to the previous app shell.
+  //
+  // Serving navigations network-first instead keeps the shell current
+  // whenever the network is reachable, while still falling back to the
+  // last good copy offline (and after networkTimeoutSeconds on a slow
+  // connection), so the PWA still launches without a network.
+  workbox.routing.registerRoute(
+    ({ request }) => request.mode === "navigate",
+    new workbox.strategies.NetworkFirst({
+      cacheName: "gravit-designer-shell",
+      networkTimeoutSeconds: 5,
+    }),
   );
 } else {
   console.warn("No workbox");
