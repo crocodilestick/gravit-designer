@@ -35,6 +35,15 @@ router.delete("/file/:id", (req, res) => {
   res.status(204).end();
 });
 
+// COPY is what the tab context menu's Duplicate uses for a server-backed
+// document (gApi.copyFile -> COPY /file/:id, then it opens the returned
+// id). It's a real HTTP method, so Express routes it directly.
+router.copy("/file/:id", jsonBody, (req, res) => {
+  const file = fileStore.copy(req.params.id, req.body);
+  if (!file) return res.status(404).json({ error: "not found" });
+  res.json(file);
+});
+
 // Stand-in for the original product's S3 "signed put URL" — since we own
 // the whole server, this just hands back one of our own upload endpoints.
 router.put("/file/:id/urls", jsonBody, (req, res) => {
