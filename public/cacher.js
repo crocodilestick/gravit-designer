@@ -1,9 +1,13 @@
-importScripts(
-  "https://storage.googleapis.com/workbox-cdn/releases/5.1.4/workbox-sw.js",
-);
+// Workbox is served from this repo rather than Google's CDN, so the
+// service worker still installs on a LAN-only or air-gapped host. See
+// public/workbox/README.md for provenance and how to refresh it.
+importScripts("workbox/workbox-sw.js");
 
 if (workbox) {
-  workbox.setConfig({ debug: false });
+  // modulePathPrefix redirects the loader's lazy importScripts for each
+  // workbox.<namespace> at the vendored copies; without it they would
+  // still come from the CDN. Must be set before any namespace is touched.
+  workbox.setConfig({ debug: false, modulePathPrefix: "workbox/" });
   workbox.core.setCacheNameDetails({
     prefix: "gravit-designer",
     precache: "precache",

@@ -101,6 +101,7 @@ gravit-designer/
 │   │   ├── icon/              # UI icons
 │   │   ├── img/               # Images & branding
 │   │   └── prerendered/       # App icons (16–512 px)
+│   ├── workbox/               # Service-worker runtime (vendored, not CDN)
 │   └── *.worker.js            # Web Workers (PDF, PS, autosave)
 │
 ├── routes/
