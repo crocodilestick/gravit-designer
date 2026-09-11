@@ -1,0 +1,16 @@
+# Builds the image from this checkout rather than pulling it, for local
+# development or if you would rather not run someone else's image.
+#
+#   docker compose -f docker-compose.build.yml up -d --build
+services:
+  gravit-designer:
+    build: .
+    ports:
+      - "3100:3100"
+    environment:
+      - PORT=3100
+      - PROJECTS_DIR=/data/projects
+    volumes:
+      # Designs live here on the host, so they survive rebuilds.
+      - ./projects:/data/projects
+    restart: unless-stopped

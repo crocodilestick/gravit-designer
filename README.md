@@ -271,23 +271,37 @@ history in this version — every project lives in one flat list.
 
 ## Docker
 
-Run it as a container with your projects persisted to a folder on the host:
+Either way, the server starts on **http://localhost:3100** and bind-mounts
+`./projects` to `/data/projects` inside the container — so your designs live
+on the host, survive image updates, and are reachable from any device on your
+network that can reach the host.
+
+### Using the published image
+
+Nothing to clone or build — `docker-compose.yml` is all you need:
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
-This builds the image, starts the server on **http://localhost:3100**, and
-bind-mounts `./projects` (created next to `docker-compose.yml`) to
-`/data/projects` inside the container — so your designs live on the host
-and survive container rebuilds/updates, and are reachable from any device
-on your network that can reach the host.
+It pulls [`crocodilestick/gd-server`](https://hub.docker.com/r/crocodilestick/gd-server),
+which is built and published automatically from `main`. `latest` moves with
+every change, and each build is also tagged `sha-<commit>` if you would rather
+pin to a specific one.
+
+### Building it yourself
+
+To build from this checkout instead of pulling:
+
+```bash
+docker compose -f docker-compose.build.yml up -d --build
+```
 
 Without Compose:
 
 ```bash
-docker build -t gravit-designer .
-docker run -d -p 3100:3100 -v "$(pwd)/projects:/data/projects" gravit-designer
+docker build -t gd-server .
+docker run -d -p 3100:3100 -v "$(pwd)/projects:/data/projects" gd-server
 ```
 
 ## Building Desktop Apps

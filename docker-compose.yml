@@ -1,13 +1,16 @@
+# Runs the published image from Docker Hub — no checkout or build needed,
+# just this file. To build from source instead, see docker-compose.build.yml.
+#
+#   docker compose up -d
 services:
   gravit-designer:
-    container_name: gravit
-    image: crocodilestick/gravitdesigner:latest
-    build: .
+    image: crocodilestick/gd-server:latest
     ports:
       - "3100:3100"
     environment:
       - PORT=3100
       - PROJECTS_DIR=/data/projects
     volumes:
-      - /docker/gravit/projects:/data/projects
+      # Designs live here on the host, so they survive image updates.
+      - ./projects:/data/projects
     restart: unless-stopped
