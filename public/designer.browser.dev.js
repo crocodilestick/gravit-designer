@@ -58742,8 +58742,8 @@ function (e, t, n) {
           if (!r) return;
           const s = await this._fetchTranslation(o, r),
             l = await this._fetchTranslation(n, r);
-          i.GLocale.replaceValues(o, e, s.translations),
-            i.GLocale.replaceValues(n, e, l.translations),
+          s && s.translations && i.GLocale.replaceValues(o, e, s.translations),
+            l && l.translations && i.GLocale.replaceValues(n, e, l.translations),
             i.GLocale.setLanguage(e),
             a.GLocaleFactory.setLanguage(e),
             a.gApi.setLanguage(e);
@@ -58767,8 +58767,10 @@ function (e, t, n) {
         );
       }
       static async _fetchTranslation(e, t) {
+        var n = await this._getCDNURL(e, t);
+        if (!n) return;
         if (!(await this._shouldFetchTranslation(e, t))) return;
-        return await fetch(await this._getCDNURL(e, t)).then((e) => e.json());
+        return await fetch(n).then((e) => e.json());
       }
       static async _getCDNURL(e, t) {
         const n = t.abbreviation,
