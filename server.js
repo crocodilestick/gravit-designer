@@ -34,23 +34,20 @@ app.use(
   express.static(path.join(__dirname, "public"), {
     setHeaders: (res, filePath) => {
       const name = path.basename(filePath);
-      // index.html loads designer.browser.dev.js, not designer.browser.js,
-      // so the immutable header was being applied to a file nothing
-      // requests while the 6.7MB bundle actually served got no caching
-      // policy at all.
+      // Nothing here has a content-addressed filename, so nothing here
+      // can be cached without a revalidation: a deploy changes what a
+      // fixed name points at, and the browser has no way to notice. The
+      // bundles were served "immutable" for a month, which is a promise
+      // this app cannot keep -- a patched designer.browser.dev.js sat
+      // unseen behind it, past reloads that would not even revalidate.
+      //
+      // This is not a re-download on every load. express.static answers
+      // an unchanged file with a bodiless 304; only the round trip is
+      // spent, on a handful of files.
       if (
         name === "chunk.vendor.js" ||
         name === "designer.browser.js" ||
-        name === "designer.browser.dev.js"
-      ) {
-        res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
-      }
-      // These must always be revalidated (not cached at a CDN/browser
-      // level): index.html and cacher.js so a new deploy — and any future
-      // service-worker precache update — is actually seen, and
-      // save-to-server.js since it changes independently of the app bundle
-      // and has no cache-busting filename.
-      if (
+        name === "designer.browser.dev.js" ||
         name === "index.html" ||
         name === "cacher.js" ||
         name === "save-to-server.js"
