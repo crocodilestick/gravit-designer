@@ -1,0 +1,83 @@
+name: Docker image
+
+# Builds the container and pushes it to Docker Hub, so deployments can pull a
+# new image instead of it being built and pushed by hand.
+#
+# Requires two repository secrets (Settings > Secrets and variables > Actions):
+#   DOCKERHUB_USERNAME  your Docker Hub username
+#   DOCKERHUB_TOKEN     an access token from hub.docker.com > Account settings
+#                       > Personal access tokens (use a token, not the password)
+on:
+  push:
+    branches: [main]
+    tags: ['[0-9]+.[0-9]+.[0-9]+']
+    # Only paths that can't end up inside the image. docs/ and public/ are
+    # deliberately absent from this list: both are COPYed by the Dockerfile,
+    # so a change to either genuinely does need a new image.
+    paths-ignore:
+      - 'README.md'
+      - '.gitignore'
+      - 'docker-compose*.yml'
+      - 'native/**'
+      - 'releases/**'
+      - 'reverse-engineering/**'
+      - '.github/workflows/thumbnail-provider.yml'
+  workflow_dispatch:
+
+# A newer push supersedes an in-flight build of the same ref; tag builds are
+# never cancelled since those publish release versions.
+concurrency:
+  group: docker-image-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # To also publish arm64, build it natively on a self-hosted arm runner
+      # and merge the two into one manifest, rather than emulating arm64 here
+      # under QEMU (slow with a build context this size).
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: crocodilestick/gd-server
+          # latest  — the moving tag deployments follow for auto-update
+          # sha-... — immutable, so a bad build can be pinned back to
+          # 1.2.3   — published only when a version tag is pushed
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Layer cache between runs — npm ci in particular is worth keeping.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Pushed"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
