@@ -94598,7 +94598,7 @@ function (e, t, n) {
           n < d.length;
           ++n
         )
-          if (d[n].key === gDesigner.getSetting("theme", "light")) {
+          if (d[n].key === gDesigner.getSetting("theme", "dark")) {
             e = d[n];
             break;
           }
@@ -123729,7 +123729,7 @@ function (e, t, n) {
           this.relayout();
       }),
       (Je.prototype._setTheme = function (e) {
-        (e && "default" !== e) || (e = "light");
+        (e && "default" !== e) || (e = "dark");
         var t = $('head > link[href$=".css"]'),
           n = t.attr("href").split(".");
         (n[2] = e),
@@ -171173,7 +171173,7 @@ function (e, t, n) {
                   if ("assets/icon/notification-icon.svg" === t.avatar) {
                     let t;
                     (t =
-                      "light" === gDesigner.getSetting("theme", "light")
+                      "light" === gDesigner.getSetting("theme", "dark")
                         ? "assets/icon/notification-icon-light.svg"
                         : "assets/icon/notification-icon-dark.svg"),
                       (s = $(
