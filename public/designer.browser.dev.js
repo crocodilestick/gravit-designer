@@ -121825,7 +121825,7 @@ function (e, t, n) {
         this.addEventListener(Te, this._applicationStatusEvent, this),
         this.addEventListener(ue, this._applicationStateChangedEvent, this),
         this.addEventListener(pe, this._shareEvent, this),
-        (this._settings.theme = "light"),
+        (this._settings.theme = "dark"),
         (this._settings.snap_disabled = !1),
         (this._settings.snap_zones = !1),
         (this._settings.snap_guides = [
