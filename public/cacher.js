@@ -5082,6 +5082,38 @@ if (workbox) {
       networkTimeoutSeconds: 5,
     }),
   );
+  // Corel's asset CDN is gone -- dkqeh8b5t3gxm.cloudfront.net no longer
+  // resolves at all, so every category thumbnail in the shapes, icons,
+  // stickers and templates panels fails and logs a console error on each
+  // load. The URLs are baked into a JSON catalogue inside
+  // chunk.vendor.js, which is precached under a fixed revision, so
+  // editing them there would be invisible to anyone who already has the
+  // app installed.
+  //
+  // Answer the dead host here instead, with a 1x1 transparent PNG. The
+  // images are not recoverable either way; this just lets the panels
+  // degrade quietly rather than filling the console with failures nobody
+  // can act on. Registration is delayed 15s after load, so a browser's
+  // very first visit still logs them once.
+  const DEAD_ASSET_CDN = "dkqeh8b5t3gxm.cloudfront.net";
+  const TRANSPARENT_PNG = Uint8Array.from(
+    atob(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
+    ),
+    (c) => c.charCodeAt(0),
+  );
+
+  workbox.routing.registerRoute(
+    ({ url }) => url.hostname === DEAD_ASSET_CDN,
+    () =>
+      new Response(TRANSPARENT_PNG, {
+        status: 200,
+        headers: {
+          "Content-Type": "image/png",
+          "Cache-Control": "no-store",
+        },
+      }),
+  );
 } else {
   console.warn("No workbox");
 }
