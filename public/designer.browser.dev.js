@@ -173262,7 +173262,8 @@ function (e, t, n) {
     function i() {
       if (o.length > 0) {
         var e = $(o[o.length - 1]);
-        $(e).data("gdialog").closable && e.gDialog("close", !0);
+        var n = $(e).data("gdialog");
+        n && n.closable && e.gDialog("close", !0);
       }
     }
     document.addEventListener("keydown", function (e) {
@@ -173311,7 +173312,7 @@ function (e, t, n) {
       open: function (e) {
         var t = $(this),
           n = t.data("gdialog"),
-          a = n.options || {};
+          a = (n && n.options) || {};
         n && (n.closable = e || !1);
         var r = t.closest(".g-dialog"),
           s = $("<div></div>")
@@ -173341,7 +173342,7 @@ function (e, t, n) {
       },
       close: function (e, t) {
         var n = $(this),
-          i = n.data("gdialog").options || {};
+          i = (n.data("gdialog") || {}).options || {};
         if (
           (i.alwaysCloseable && o.indexOf(this[0]) >= 0) ||
           (o.length && o[o.length - 1] === this[0])
