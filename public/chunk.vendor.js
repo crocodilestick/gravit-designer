@@ -69358,10 +69358,12 @@
             !window.hasOwnProperty("fetch") ||
             !Array.hasOwnProperty("from")))
       ) {
-        var y = document.createElement("script");
-        ((y.src =
-          "https://cdn.polyfill.io/v2/polyfill.min.js?features=default,URL,fetch"),
-          document.body.insertBefore(y, document.body.firstChild));
+        // polyfill.io is not fetched. This branch only runs on a browser
+        // missing URLSearchParams, fetch or Array.from, so it never fires
+        // on anything current -- but the domain was sold and spent part
+        // of 2024 serving malware, and a dormant script tag pointing at
+        // it is not worth keeping. A browser old enough to land here
+        // cannot run this app anyway.
       }
       let _ = [];
       "undefined" != typeof window &&

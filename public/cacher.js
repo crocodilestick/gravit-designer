@@ -5005,7 +5005,7 @@ if (workbox) {
         // transparent PNG. Workbox re-fetches a precached entry only when
         // its revision changes, so without this every existing install
         // would keep serving the old copy and keep hitting the CDN.
-        revision: "b448d9ecd636b6d1adcc1c55defb7c88_8795",
+        revision: "4fb1df88c7e9483d556b15d12367e254_8795",
         url: "chunk.vendor.js",
       },
       {

@@ -119422,14 +119422,14 @@ function (e, t, n) {
               (h.hj.q = h.hj.q || []).push(arguments);
             }),
           (h._hjSettings = { hjid: 754178, hjsv: 6 }),
-          (w = b.getElementsByTagName("head")[0]),
-          ((S = b.createElement("script")).async = 1),
-          (S.src =
-            "https://static.hotjar.com/c/hotjar-" +
-            h._hjSettings.hjid +
-            ".js?sv=" +
-            h._hjSettings.hjsv),
-          w.appendChild(S)),
+          // Hotjar's session recorder (hjid 754178) is not loaded here.
+          // It records what the user does on screen and ships it to a
+          // third party, which has no business running in a personal
+          // self-hosted install. The hj() queue stub and _hjSettings
+          // above are left as they were, so any call site stays a
+          // harmless push onto an array nothing drains.
+          (w = void 0),
+          (S = void 0)),
         gDesigner.setStoreVendor(v),
         gDesigner.setVersion("3.15.0"),
         gDesigner.setCommitSHA("566771f4dff3952a55c0d9d3c130f7e787dfdfa7"),
@@ -120447,11 +120447,16 @@ function (e, t, n) {
     !(function (e, t, n, o, i) {
       (e[o] = e[o] || []),
         e[o].push({ "gtm.start": new Date().getTime(), event: "gtm.js" });
-      var a = t.getElementsByTagName(n)[0],
-        r = t.createElement(n);
-      (r.async = !0),
-        (r.src = "https://www.googletagmanager.com/gtm.js?id=" + i),
-        a.parentNode.insertBefore(r, a);
+      // Google Tag Manager is not loaded on this build. The injection
+      // that stood here had no guard of any kind -- no consent check, no
+      // environment check -- so every page load of a self-hosted instance
+      // reported to Google's container, and invisibly, because a request
+      // that succeeds logs nothing.
+      //
+      // window.dataLayer and the push above are deliberately left in
+      // place: the app calls stats() from all over (every settings
+      // click, every action), and those calls now just append to an array
+      // nothing ever drains.
     })(window, document, "script", "dataLayer", d);
     const u = () => {
       switch (i.GSystem.hardware) {
