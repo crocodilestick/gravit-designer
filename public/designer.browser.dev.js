@@ -190,7 +190,14 @@ function (e, t, n) {
         URL_TO_PRODUCT: { purchase_flow: 214093, purchase_flow_new: 220444 },
       }),
       (i.LEGACY_SHARE_DIALOG = !1),
-      (i.ENABLE_COLLABORATION = !0),
+      // No collaboration backend here: attachDocument opens a websocket to
+      // /v2/realtime/<id>, which this server has no route for, so every
+      // document with a storage item produced repeated failed connections
+      // in the console. This flag is the app's own switch for the whole
+      // feature -- it also gates the collaboration event handlers and the
+      // "what is your name" dialog, none of which can work without a
+      // realtime server.
+      (i.ENABLE_COLLABORATION = !1),
       (i.FILE_REVIEW_ENABLED = !0),
       (i.ENABLE_REQUEST_ACCESS = !0),
       (i.ENABLE_GUEST_ACCESS = !0),
@@ -23794,7 +23801,7 @@ function (e, t, n) {
       TOUCH_LAYOUT: !0,
       SHARE_ENGINE: !0,
       LEGACY_SHARE_DIALOG: !1,
-      ENABLE_COLLABORATION: !0,
+      ENABLE_COLLABORATION: !1,
       ENABLE_REQUEST_ACCESS: !0,
       ENABLE_GUEST_ACCESS: !0,
       LISTS_FEATURE: !0,
