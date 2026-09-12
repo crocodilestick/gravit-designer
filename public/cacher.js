@@ -4996,7 +4996,7 @@ if (workbox) {
         url: "assets/static/maintenance/logo.svg",
       },
       {
-        revision: "5e8a53dc5cc5fe70b07b667bc415df5f_8795",
+        revision: "ed2269e0c048670332049ec17b78d523_8795",
         url: "autosave.worker.js",
       },
       {
@@ -5019,10 +5019,6 @@ if (workbox) {
       {
         revision: "7a1bcf750f1e20a28f0d64980a65a8a0_8795",
         url: "designer.browser.dark.css",
-      },
-      {
-        revision: "baf096a18f3169da2e2c91bd59a3474f_8795",
-        url: "designer.browser.js",
       },
       {
         revision: "dff101132147349edd900a10cd3b972d_8795",
