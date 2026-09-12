@@ -9,12 +9,29 @@ const jsonBody = express.json();
 // and only on these two upload routes so express.json() elsewhere is unaffected.
 const rawBody = express.raw({ type: "*/*", limit: "512mb" });
 
-router.get("/file", (_req, res) => {
-  res.json(fileStore.list());
+// Folders are opt-in. The app's own bundle calls listFiles in several
+// places expecting documents, so the default response is unchanged and
+// only our file browser asks for the hierarchy.
+router.get("/file", (req, res) => {
+  const includeFolders =
+    req.query.includeFolders === "1" || req.query.includeFolders === "true";
+  res.json(fileStore.list({ includeFolders }));
 });
 
-router.post("/file", jsonBody, (req, res) => {
-  res.json(fileStore.create(req.body));
+router.post("/file", jsonBody, (req, res, next) => {
+  try {
+    res.json(fileStore.create(req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// What a delete would remove, so the confirmation can name the cost
+// before a folder takes its subtree with it.
+router.get("/file/:id/removal", (req, res) => {
+  const info = fileStore.describeRemoval(req.params.id);
+  if (!info) return res.status(404).json({ error: "not found" });
+  res.json(info);
 });
 
 router.get(["/file/:id", "/file/:id/full"], (req, res) => {
@@ -23,12 +40,21 @@ router.get(["/file/:id", "/file/:id/full"], (req, res) => {
   res.json(file);
 });
 
-router.put("/file/:id", jsonBody, (req, res) => {
-  const file = fileStore.update(req.params.id, req.body);
-  if (!file) return res.status(404).json({ error: "not found" });
-  res.json(file);
+router.put("/file/:id", jsonBody, (req, res, next) => {
+  try {
+    const file = fileStore.update(req.params.id, req.body);
+    if (!file) return res.status(404).json({ error: "not found" });
+    res.json(file);
+  } catch (err) {
+    next(err);
+  }
 });
 
+// Still 204, as before: gApi.deleteFile in the app's own bundle goes
+// through a shared request helper whose empty-body handling is not worth
+// guessing at. Callers that want to know what a folder delete will take
+// ask GET /file/:id/removal first, which our browser does anyway to word
+// its confirmation.
 router.delete("/file/:id", (req, res) => {
   if (!fileStore.remove(req.params.id))
     return res.status(404).json({ error: "not found" });
@@ -83,6 +109,15 @@ router.get("/file/:id/thumbnail", (req, res) => {
   if (!thumb) return res.status(404).end();
   res.setHeader("Content-Type", thumb.mimeType);
   res.send(thumb.buffer);
+});
+
+// Turns the store's caller-mistake errors into 400s instead of letting
+// Express answer 500 with a stack.
+router.use((err, _req, res, next) => {
+  if (err && err.status === 400) {
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
 });
 
 module.exports = router;
