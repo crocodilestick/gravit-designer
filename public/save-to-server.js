@@ -108,7 +108,7 @@
     btn.textContent = label;
     btn.title = title;
     const base =
-      "flex:none;padding:4px 10px;border-radius:4px;border:1px solid #666;background:transparent;color:#ddd;font-size:12px;cursor:pointer;";
+      "flex:none;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:12px;line-height:1;padding:5px 10px;border-radius:4px;border:1px solid #666;background:transparent;color:#ddd;cursor:pointer;";
     btn.style.cssText = base;
     btn.onmouseenter = () => {
       btn.style.background = danger ? "#c0392b" : "rgba(255,255,255,0.12)";
@@ -126,9 +126,11 @@
   function styledButton(label, primary) {
     const btn = document.createElement("button");
     btn.textContent = label;
+    const shape =
+      "display:inline-flex;align-items:center;justify-content:center;font:inherit;line-height:1;padding:7px 14px;border-radius:4px;cursor:pointer;";
     btn.style.cssText = primary
-      ? "padding:7px 14px;border-radius:4px;border:none;background:#2f80ed;color:#fff;cursor:pointer;"
-      : "padding:7px 14px;border-radius:4px;border:1px solid #555;background:transparent;color:#eee;cursor:pointer;";
+      ? shape + "border:none;background:#2f80ed;color:#fff;"
+      : shape + "border:1px solid #555;background:transparent;color:#eee;";
     return btn;
   }
 
