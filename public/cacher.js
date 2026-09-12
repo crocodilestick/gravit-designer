@@ -5000,7 +5000,12 @@ if (workbox) {
         url: "autosave.worker.js",
       },
       {
-        revision: "7cb88ae15681e925b9825a7c19295eaf_8795",
+        // Bumped from 7cb88ae15681e925b9825a7c19295eaf_8795 when the dead
+        // CDN URLs inside this bundle were replaced with an inline
+        // transparent PNG. Workbox re-fetches a precached entry only when
+        // its revision changes, so without this every existing install
+        // would keep serving the old copy and keep hitting the CDN.
+        revision: "b448d9ecd636b6d1adcc1c55defb7c88_8795",
         url: "chunk.vendor.js",
       },
       {
