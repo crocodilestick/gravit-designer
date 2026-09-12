@@ -25,6 +25,7 @@ points the loader at them with `modulePathPrefix`.
 | `workbox-precaching.prod.js` | on demand, by `precacheAndRoute`           |
 | `workbox-routing.prod.js`    | on demand, by `registerRoute`              |
 | `workbox-strategies.prod.js` | on demand, by `NetworkFirst`               |
+| `workbox-expiration.prod.js` | on demand, by `ExpirationPlugin`           |
 
 `workbox-sw.js` resolves the others lazily, the first time something
 touches `workbox.<namespace>`, so a namespace that gets added to
@@ -38,7 +39,8 @@ Only the production builds are vendored; `cacher.js` sets
 ```bash
 BASE=https://storage.googleapis.com/workbox-cdn/releases/5.1.4
 for f in workbox-sw workbox-core.prod workbox-precaching.prod \
-         workbox-routing.prod workbox-strategies.prod; do
+         workbox-routing.prod workbox-strategies.prod \
+         workbox-expiration.prod; do
   curl -s "$BASE/$f.js" | sed '/^\/\/# sourceMappingURL=/d' > "$f.js"
 done
 ```

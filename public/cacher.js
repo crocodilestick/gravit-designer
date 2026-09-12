@@ -5095,6 +5095,39 @@ if (workbox) {
   // degrade quietly rather than filling the console with failures nobody
   // can act on. Registration is delayed 15s after load, so a browser's
   // very first visit still logs them once.
+  // designer.browser.dev.js and save-to-server.js are the two files this
+  // project patches, and they are the only scripts index.html loads that
+  // the precache manifest does not list -- it was generated before they
+  // existed. They are also served no-cache, deliberately, so a patched
+  // build cannot get stuck behind a stale copy.
+  //
+  // Together that meant an installed PWA could not start offline: jQuery,
+  // the vendor chunk and the stylesheet all came from the precache, and
+  // then the main bundle failed on the network and nothing booted.
+  //
+  // NetworkFirst gives both properties at once: online it always takes
+  // the fresh copy, so nothing can pin an old build, and offline it falls
+  // back to the last one that loaded. Their URLs carry a content hash, so
+  // each build is a separate entry; keep only a few, since the bundle is
+  // several megabytes.
+  workbox.routing.registerRoute(
+    ({ url, request }) =>
+      request.destination === "script" &&
+      url.origin === self.location.origin &&
+      (url.pathname === "/designer.browser.dev.js" ||
+        url.pathname === "/save-to-server.js"),
+    new workbox.strategies.NetworkFirst({
+      cacheName: "gravit-designer-app-scripts",
+      networkTimeoutSeconds: 10,
+      plugins: [
+        new workbox.expiration.ExpirationPlugin({
+          maxEntries: 6,
+          purgeOnQuotaError: true,
+        }),
+      ],
+    }),
+  );
+
   const DEAD_ASSET_CDN = "dkqeh8b5t3gxm.cloudfront.net";
   const TRANSPARENT_PNG = Uint8Array.from(
     atob(
