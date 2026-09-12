@@ -117,8 +117,18 @@ app.get("/maintenance/status", (_req, res) => {
   res.json({ maintenance: false });
 });
 
-// i18n URL
-app.get("/i18n-url/:locale/designer", (_req, res) => {
+// Where to download translations for a locale. The client asks per
+// project -- "designer" and "cloud" -- and only "designer" was routed, so
+// every startup put a 404 for the cloud one in the console.
+//
+// The empty object is deliberate, not a stub left unfinished. Answering
+// with a URL would make the client download a string table and hand it to
+// GLocale.replaceValues, which assigns a language's values wholesale; any
+// payload we could invent here would therefore blank out the real UI
+// strings. There is no translation CDN to point at either -- Corel's is
+// gone -- and the translations are already embedded in the app bundle. No
+// "url" field means the client keeps those, which is the correct outcome.
+app.get("/i18n-url/:locale/:project", (_req, res) => {
   res.json({});
 });
 
