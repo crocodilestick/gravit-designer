@@ -45,7 +45,11 @@
   // Small reusable modal shell — an overlay + centered box — used by both
   // the name prompt and the browse dialog below. Resolves with whatever
   // the caller passes to `close()`; resolves null on backdrop click.
-  function openModal(contentBuilder) {
+  // options.boxStyle appends CSS declarations to the dialog box. Later
+  // declarations win, so a caller can widen or re-lay-out the box without
+  // the small prompts changing shape.
+  function openModal(contentBuilder, options) {
+    const opts = options || {};
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.style.cssText = [
@@ -69,7 +73,9 @@
         "max-height:80vh",
         "overflow:auto",
         "box-shadow:0 4px 24px rgba(0,0,0,0.4)",
-      ].join(";");
+      ]
+        .concat(opts.boxStyle || [])
+        .join(";");
       overlay.appendChild(box);
       document.body.appendChild(overlay);
 
@@ -92,6 +98,29 @@
       });
       contentBuilder(box, close, ctx);
     });
+  }
+
+  // Shared row-action button styling (Rename / Move / Delete), with an
+  // optional danger colour on hover.
+  function rowButton(label, title, danger) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.title = title;
+    const base =
+      "flex:none;padding:4px 10px;border-radius:4px;border:1px solid #666;background:transparent;color:#ddd;font-size:12px;cursor:pointer;";
+    btn.style.cssText = base;
+    btn.onmouseenter = () => {
+      btn.style.background = danger ? "#c0392b" : "rgba(255,255,255,0.12)";
+      if (danger) btn.style.borderColor = "#c0392b";
+      btn.style.color = "#fff";
+    };
+    btn.onmouseleave = () => {
+      btn.style.background = "transparent";
+      btn.style.borderColor = "#666";
+      btn.style.color = "#ddd";
+    };
+    return btn;
   }
 
   function styledButton(label, primary) {
@@ -166,173 +195,564 @@
 
   // Lists server files (GET /file) with live filtering, and lets the user
   // open or delete one.
-  function browseServerFiles() {
-    return openModal(async (box, close, ctx) => {
-      box.style.minWidth = "520px";
+  // ---------------------------------------------------------------
+  // Server file browser
+  //
+  // The hierarchy is metadata-only: every record carries a `parent` id
+  // and folders are records with folder:true, so the tree is assembled
+  // here from one flat listing rather than walked a level at a time.
+  // Folders are opt-in on the listing endpoint, because the app's own
+  // listFiles callers expect documents only.
+  // ---------------------------------------------------------------
+
+  const ROOT_LABEL = "All Projects";
+
+  function fetchRecords(signal) {
+    return fetch("/file?includeFolders=1", { signal }).then((r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    });
+  }
+
+  function indexRecords(records) {
+    const live = (records || []).filter((r) => !r.trashed);
+    const byId = new Map(live.map((r) => [r.id, r]));
+    const children = new Map();
+    for (const r of live) {
+      const key = r.parent || null;
+      if (!children.has(key)) children.set(key, []);
+      children.get(key).push(r);
+    }
+    for (const list of children.values()) {
+      list.sort((a, b) => {
+        // Folders first, then most-recently-touched.
+        if (!!a.folder !== !!b.folder) return a.folder ? -1 : 1;
+        if (a.folder && b.folder) return (a.name || "").localeCompare(b.name || "");
+        return (
+          new Date(b.updated || b.modifiedTime || 0) -
+          new Date(a.updated || a.modifiedTime || 0)
+        );
+      });
+    }
+    return { live, byId, children };
+  }
+
+  function childrenOf(idx, parentId) {
+    return idx.children.get(parentId || null) || [];
+  }
+
+  // "Client work / Acme", for the breadcrumb and the search results' hint.
+  function folderPath(idx, id) {
+    const parts = [];
+    let cur = id ? idx.byId.get(id) : null;
+    const guard = new Set();
+    while (cur && !guard.has(cur.id)) {
+      guard.add(cur.id);
+      parts.unshift(cur.name || "Untitled");
+      cur = cur.parent ? idx.byId.get(cur.parent) : null;
+    }
+    return parts.length ? parts.join(" / ") : ROOT_LABEL;
+  }
+
+  // Folder chooser for Move. Resolves { id } with a folder id or null for
+  // the root, or null when cancelled -- the two have to stay
+  // distinguishable, since "move to root" is a real choice.
+  function pickFolder(idx, movingRecord, title) {
+    // A folder cannot be moved inside itself or its own subtree; the
+    // server rejects it too, but offering it would be a trap.
+    const blocked = new Set();
+    if (movingRecord && movingRecord.folder) {
+      const queue = [movingRecord.id];
+      blocked.add(movingRecord.id);
+      while (queue.length) {
+        for (const child of childrenOf(idx, queue.shift())) {
+          if (child.folder) {
+            blocked.add(child.id);
+            queue.push(child.id);
+          }
+        }
+      }
+    }
+
+    return openModal((box, close) => {
       const h = document.createElement("div");
-      h.textContent = "Open from Server";
+      h.textContent = title;
       h.style.cssText = "font-size:15px;font-weight:600;margin-bottom:12px;";
       box.appendChild(h);
 
-      const search = document.createElement("input");
-      search.type = "text";
-      search.placeholder = "Search files...";
-      search.style.cssText =
-        "width:100%;box-sizing:border-box;padding:8px;border-radius:4px;border:1px solid #555;background:#1e1e1e;color:#eee;font-size:13px;margin-bottom:12px;";
-      search.style.display = "none"; // shown once the listing arrives
-      box.appendChild(search);
-
       const list = document.createElement("div");
-      list.textContent = "Loading…";
-      list.style.cssText = "max-height:50vh;overflow:auto;";
+      list.style.cssText = "max-height:50vh;overflow:auto;margin-bottom:12px;";
       box.appendChild(list);
 
-      const footer = document.createElement("div");
-      footer.style.cssText = "display:flex;justify-content:flex-end;margin-top:12px;";
-      const closeBtn = styledButton("Close", false);
-      closeBtn.onclick = () => close(null);
-      footer.appendChild(closeBtn);
-      box.appendChild(footer);
-
-      // Abort the listing if the dialog is closed, and give up after a
-      // while rather than sitting on "Loading..." forever. Opening this
-      // repeatedly used to leave each previous fetch running against the
-      // browser's per-origin connection limit; now closing cancels.
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      ctx.onClose = () => controller.abort();
-
-      let files;
-      const startedAt = Date.now();
-      try {
-        files = await fetch("/file", { signal: controller.signal }).then((r) => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        });
-        const elapsed = Date.now() - startedAt;
-        if (elapsed > 1000) {
-          console.warn(`[save-to-server] listing took ${elapsed}ms`);
+      function addOption(label, id, depth, disabled) {
+        const row = document.createElement("div");
+        row.textContent = label;
+        row.style.cssText = `padding:7px 10px;padding-left:${
+          10 + depth * 16
+        }px;border-radius:4px;${
+          disabled
+            ? "color:#777;cursor:not-allowed;"
+            : "cursor:pointer;color:#eee;"
+        }`;
+        if (!disabled) {
+          row.onmouseenter = () => {
+            row.style.background = "rgba(255,255,255,0.08)";
+          };
+          row.onmouseleave = () => {
+            row.style.background = "transparent";
+          };
+          row.onclick = () => close({ id: id });
         }
-      } catch (err) {
-        if (controller.signal.aborted && !document.body.contains(box)) return;
-        list.textContent = "";
-        const msg = document.createElement("div");
-        msg.style.cssText = "margin-bottom:12px;";
-        msg.textContent = controller.signal.aborted
-          ? "Timed out listing server files."
-          : `Failed to load files: ${err && err.message ? err.message : err}`;
-        const retry = styledButton("Retry", true);
-        retry.onclick = () => {
-          close(null);
-          browseServerFiles();
-        };
-        list.appendChild(msg);
-        list.appendChild(retry);
-        return;
-      } finally {
-        clearTimeout(timeout);
+        list.appendChild(row);
       }
 
-      files = (files || []).filter((f) => !f.trashed);
-      files.sort(
-        (a, b) =>
-          new Date(b.updated || b.modifiedTime || 0) -
-          new Date(a.updated || a.modifiedTime || 0),
-      );
+      addOption(ROOT_LABEL, null, 0, movingRecord && !movingRecord.parent);
 
-      function buildRow(file) {
-        const name = file.name || "Untitled";
-        const row = document.createElement("div");
-        row.style.cssText =
-          "padding:8px 10px;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:12px;";
-        row.onmouseenter = () => {
-          row.style.background = "rgba(255,255,255,0.08)";
-        };
-        row.onmouseleave = () => {
-          row.style.background = "transparent";
-        };
-
-        const nameEl = document.createElement("div");
-        nameEl.textContent = name;
-        nameEl.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
-
-        const dateEl = document.createElement("div");
-        dateEl.style.cssText = "color:#999;font-size:12px;white-space:nowrap;";
-        const when = file.updated || file.modifiedTime;
-        dateEl.textContent = when ? new Date(when).toLocaleString() : "";
-
-        const del = document.createElement("button");
-        del.type = "button";
-        del.title = `Delete "${name}" from the server`;
-        del.textContent = "Delete";
-        del.style.cssText =
-          "flex:none;padding:4px 10px;border-radius:4px;border:1px solid #666;background:transparent;color:#ddd;font-size:12px;cursor:pointer;";
-        del.onmouseenter = () => {
-          del.style.background = "#c0392b";
-          del.style.borderColor = "#c0392b";
-          del.style.color = "#fff";
-        };
-        del.onmouseleave = () => {
-          del.style.background = "transparent";
-          del.style.borderColor = "#666";
-          del.style.color = "#ddd";
-        };
-        del.onclick = async (e) => {
-          // Don't let the click fall through to the row and open the file.
-          e.stopPropagation();
-          const confirmed = await confirmDialog(
-            `Delete "${name}" from the server? This permanently removes the file and cannot be undone.`,
-            "Delete",
+      (function walk(parentId, depth) {
+        for (const rec of childrenOf(idx, parentId)) {
+          if (!rec.folder) continue;
+          const isCurrent =
+            movingRecord && (movingRecord.parent || null) === rec.id;
+          addOption(
+            rec.name || "Untitled",
+            rec.id,
+            depth,
+            blocked.has(rec.id) || isCurrent,
           );
-          if (confirmed !== true) return;
+          walk(rec.id, depth + 1);
+        }
+      })(null, 1);
+
+      const footer = document.createElement("div");
+      footer.style.cssText = "display:flex;justify-content:flex-end;gap:8px;";
+      const cancel = styledButton("Cancel", false);
+      cancel.onclick = () => close(null);
+      footer.appendChild(cancel);
+      box.appendChild(footer);
+    });
+  }
+
+  function browseServerFiles() {
+    return openModal(
+      async (box, close, ctx) => {
+        const h = document.createElement("div");
+        h.style.cssText =
+          "display:flex;align-items:center;gap:12px;margin-bottom:12px;flex:none;";
+        const title = document.createElement("div");
+        title.textContent = "Open from Server";
+        title.style.cssText = "font-size:15px;font-weight:600;flex:1;";
+        const newFolderBtn = styledButton("New Folder", false);
+        h.appendChild(title);
+        h.appendChild(newFolderBtn);
+        box.appendChild(h);
+
+        const search = document.createElement("input");
+        search.type = "text";
+        search.placeholder = "Search all files...";
+        search.style.cssText =
+          "width:100%;box-sizing:border-box;padding:8px;border-radius:4px;border:1px solid #555;background:#1e1e1e;color:#eee;font-size:13px;margin-bottom:12px;flex:none;";
+        box.appendChild(search);
+
+        // Two panes: the tree on the left for jumping around, the
+        // contents of the selected folder on the right.
+        const panes = document.createElement("div");
+        panes.style.cssText =
+          "display:flex;gap:14px;flex:1;min-height:0;align-items:stretch;";
+        const treePane = document.createElement("div");
+        treePane.style.cssText =
+          "flex:0 0 220px;overflow:auto;border:1px solid #3a3a3a;border-radius:6px;padding:6px;";
+        const listPane = document.createElement("div");
+        listPane.style.cssText =
+          "flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;";
+        const crumb = document.createElement("div");
+        crumb.style.cssText =
+          "color:#999;font-size:12px;margin-bottom:6px;flex:none;";
+        const list = document.createElement("div");
+        list.style.cssText = "flex:1;overflow:auto;min-height:0;";
+        list.textContent = "Loading…";
+        listPane.appendChild(crumb);
+        listPane.appendChild(list);
+        panes.appendChild(treePane);
+        panes.appendChild(listPane);
+        box.appendChild(panes);
+
+        const footer = document.createElement("div");
+        footer.style.cssText =
+          "display:flex;justify-content:flex-end;margin-top:12px;flex:none;";
+        const closeBtn = styledButton("Close", false);
+        closeBtn.onclick = () => close(null);
+        footer.appendChild(closeBtn);
+        box.appendChild(footer);
+
+        // Abort the listing if the dialog is closed, and give up rather
+        // than sitting on "Loading..." forever.
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        ctx.onClose = () => controller.abort();
+
+        let idx = indexRecords([]);
+        let current = null; // null = root
+        const expanded = new Set();
+
+        function showError(err) {
+          list.textContent = "";
+          const msg = document.createElement("div");
+          msg.style.cssText = "margin-bottom:12px;";
+          msg.textContent = controller.signal.aborted
+            ? "Timed out listing server files."
+            : `Failed to load files: ${err && err.message ? err.message : err}`;
+          const retry = styledButton("Retry", true);
+          retry.onclick = () => {
+            close(null);
+            browseServerFiles();
+          };
+          list.appendChild(msg);
+          list.appendChild(retry);
+        }
+
+        async function reload(signal) {
+          const records = await fetchRecords(signal);
+          idx = indexRecords(records);
+          // A folder deleted underneath us must not leave the view
+          // pointing at nothing.
+          if (current && !idx.byId.has(current)) current = null;
+          render();
+        }
+
+        // Any mutation re-reads the listing rather than patching local
+        // state, so the view cannot drift from the server.
+        async function afterChange() {
           try {
-            const res = await fetch(`/file/${file.id}`, { method: "DELETE" });
-            // 404 means it is already gone, which is the desired end state.
-            if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
-            files = files.filter((f) => f.id !== file.id);
-            renderList();
-            showToast(`Deleted "${name}" from the server`);
+            await reload();
           } catch (err) {
             showToast(
-              `Couldn't delete "${name}": ${err && err.message ? err.message : err}`,
+              `Couldn't refresh the listing: ${
+                err && err.message ? err.message : err
+              }`,
+              true,
+            );
+          }
+        }
+
+        async function doRename(rec) {
+          const next = await promptForName(
+            rec.name || "",
+            rec.folder ? "Rename folder" : "Rename file",
+          );
+          if (!next || next === rec.name) return;
+          try {
+            const res = await fetch(`/file/${rec.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name: next }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            showToast(`Renamed to "${next}"`);
+            await afterChange();
+          } catch (err) {
+            showToast(
+              `Couldn't rename: ${err && err.message ? err.message : err}`,
+              true,
+            );
+          }
+        }
+
+        async function doMove(rec) {
+          const choice = await pickFolder(
+            idx,
+            rec,
+            `Move "${rec.name || "Untitled"}" to`,
+          );
+          if (!choice) return;
+          try {
+            const res = await fetch(`/file/${rec.id}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ parent: choice.id }),
+            });
+            if (!res.ok) {
+              const body = await res.json().catch(() => null);
+              throw new Error(
+                body && body.error ? body.error : `HTTP ${res.status}`,
+              );
+            }
+            showToast(`Moved to "${folderPath(idx, choice.id)}"`);
+            await afterChange();
+          } catch (err) {
+            showToast(
+              `Couldn't move: ${err && err.message ? err.message : err}`,
+              true,
+            );
+          }
+        }
+
+        async function doDelete(rec) {
+          const name = rec.name || "Untitled";
+          // Ask the server what the delete would take, so a folder
+          // cannot quietly bin a subtree.
+          let info = null;
+          try {
+            const res = await fetch(`/file/${rec.id}/removal`);
+            if (res.ok) info = await res.json();
+          } catch (err) {
+            /* fall back to the plain wording below */
+          }
+          let message;
+          if (info && info.folder && (info.files || info.folders)) {
+            const bits = [];
+            if (info.files)
+              bits.push(`${info.files} file${info.files === 1 ? "" : "s"}`);
+            if (info.folders)
+              bits.push(
+                `${info.folders} subfolder${info.folders === 1 ? "" : "s"}`,
+              );
+            message = `Delete "${name}" and everything inside it (${bits.join(
+              " and ",
+            )})? This cannot be undone.`;
+          } else if (rec.folder) {
+            message = `Delete the empty folder "${name}"?`;
+          } else {
+            message = `Delete "${name}" from the server? This permanently removes the file and cannot be undone.`;
+          }
+          if ((await confirmDialog(message, "Delete")) !== true) return;
+          try {
+            const res = await fetch(`/file/${rec.id}`, { method: "DELETE" });
+            // 404 means it is already gone, which is the desired end state.
+            if (!res.ok && res.status !== 404)
+              throw new Error(`HTTP ${res.status}`);
+            showToast(`Deleted "${name}"`);
+            await afterChange();
+          } catch (err) {
+            showToast(
+              `Couldn't delete "${name}": ${
+                err && err.message ? err.message : err
+              }`,
+              true,
+            );
+          }
+        }
+
+        newFolderBtn.onclick = async () => {
+          const name = await promptForName("New Folder", "Create folder");
+          if (!name) return;
+          try {
+            const res = await fetch("/file", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ name, folder: true, parent: current }),
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (current) expanded.add(current);
+            showToast(`Created folder "${name}"`);
+            await afterChange();
+          } catch (err) {
+            showToast(
+              `Couldn't create folder: ${
+                err && err.message ? err.message : err
+              }`,
               true,
             );
           }
         };
 
-        row.appendChild(nameEl);
-        row.appendChild(dateEl);
-        row.appendChild(del);
-        row.onclick = () => {
-          close(null);
-          openServerFile(file);
-        };
-        return row;
-      }
-
-      function renderList() {
-        const query = search.value.trim().toLowerCase();
-        list.innerHTML = "";
-        if (!files.length) {
-          search.style.display = "none";
-          list.textContent = "No files saved to the server yet.";
-          return;
+        function treeRow(label, id, depth, hasKids) {
+          const row = document.createElement("div");
+          row.style.cssText = `display:flex;align-items:center;gap:4px;padding:5px 6px;padding-left:${
+            6 + depth * 14
+          }px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;${
+            (current || null) === id
+              ? "background:rgba(47,128,237,0.35);"
+              : ""
+          }`;
+          const twisty = document.createElement("span");
+          twisty.style.cssText =
+            "flex:none;width:12px;color:#999;font-size:10px;text-align:center;";
+          twisty.textContent = hasKids ? (expanded.has(id) ? "▾" : "▸") : "";
+          if (hasKids) {
+            twisty.style.cursor = "pointer";
+            twisty.onclick = (e) => {
+              e.stopPropagation();
+              if (expanded.has(id)) expanded.delete(id);
+              else expanded.add(id);
+              render();
+            };
+          }
+          const text = document.createElement("span");
+          text.textContent = label;
+          text.style.cssText =
+            "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;";
+          row.appendChild(twisty);
+          row.appendChild(text);
+          row.onclick = () => {
+            current = id;
+            if (id) expanded.add(id);
+            render();
+          };
+          if ((current || null) !== id) {
+            row.onmouseenter = () => {
+              row.style.background = "rgba(255,255,255,0.06)";
+            };
+            row.onmouseleave = () => {
+              row.style.background = "transparent";
+            };
+          }
+          return row;
         }
-        search.style.display = "";
-        const shown = query
-          ? files.filter((f) => (f.name || "").toLowerCase().includes(query))
-          : files;
-        if (!shown.length) {
-          list.textContent = `No files match "${search.value.trim()}".`;
-          return;
-        }
-        shown.forEach((file) => list.appendChild(buildRow(file)));
-      }
 
-      search.addEventListener("input", renderList);
-      renderList();
-      if (files.length) search.focus();
-    });
+        function renderTree() {
+          treePane.innerHTML = "";
+          const rootHasKids = childrenOf(idx, null).some((r) => r.folder);
+          expanded.add(null);
+          treePane.appendChild(treeRow(ROOT_LABEL, null, 0, rootHasKids));
+          (function walk(parentId, depth) {
+            if (!expanded.has(parentId)) return;
+            for (const rec of childrenOf(idx, parentId)) {
+              if (!rec.folder) continue;
+              const hasKids = childrenOf(idx, rec.id).some((r) => r.folder);
+              treePane.appendChild(
+                treeRow(rec.name || "Untitled", rec.id, depth, hasKids),
+              );
+              walk(rec.id, depth + 1);
+            }
+          })(null, 1);
+        }
+
+        function buildRow(rec, pathHint) {
+          const name = rec.name || "Untitled";
+          const row = document.createElement("div");
+          row.style.cssText =
+            "padding:8px 10px;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:10px;";
+          row.onmouseenter = () => {
+            row.style.background = "rgba(255,255,255,0.08)";
+          };
+          row.onmouseleave = () => {
+            row.style.background = "transparent";
+          };
+
+          const icon = document.createElement("div");
+          icon.textContent = rec.folder ? "▣" : "▢";
+          icon.style.cssText = "flex:none;color:#9aa;font-size:12px;";
+
+          const nameEl = document.createElement("div");
+          nameEl.textContent = name;
+          nameEl.style.cssText =
+            "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+          if (pathHint) {
+            const hint = document.createElement("span");
+            hint.textContent = `  ${pathHint}`;
+            hint.style.cssText = "color:#888;font-size:11px;";
+            nameEl.appendChild(hint);
+          }
+
+          const dateEl = document.createElement("div");
+          dateEl.style.cssText =
+            "color:#999;font-size:12px;white-space:nowrap;flex:none;";
+          const when = rec.updated || rec.modifiedTime;
+          dateEl.textContent = rec.folder || !when
+            ? ""
+            : new Date(when).toLocaleString();
+
+          const rename = rowButton("Rename", `Rename "${name}"`, false);
+          rename.onclick = (e) => {
+            e.stopPropagation();
+            doRename(rec);
+          };
+          const move = rowButton("Move", `Move "${name}" to another folder`, false);
+          move.onclick = (e) => {
+            e.stopPropagation();
+            doMove(rec);
+          };
+          const del = rowButton(
+            "Delete",
+            rec.folder
+              ? `Delete "${name}" and its contents`
+              : `Delete "${name}" from the server`,
+            true,
+          );
+          del.onclick = (e) => {
+            e.stopPropagation();
+            doDelete(rec);
+          };
+
+          row.appendChild(icon);
+          row.appendChild(nameEl);
+          row.appendChild(dateEl);
+          row.appendChild(rename);
+          row.appendChild(move);
+          row.appendChild(del);
+          row.onclick = () => {
+            if (rec.folder) {
+              current = rec.id;
+              expanded.add(rec.id);
+              render();
+              return;
+            }
+            close(null);
+            openServerFile(rec);
+          };
+          return row;
+        }
+
+        function render() {
+          renderTree();
+          const query = search.value.trim().toLowerCase();
+          list.innerHTML = "";
+
+          if (query) {
+            // Search spans the whole tree -- searching only the folder
+            // you happen to be standing in is rarely what is wanted.
+            crumb.textContent = `Searching everywhere for "${search.value.trim()}"`;
+            const hits = idx.live
+              .filter((r) => !r.folder)
+              .filter((r) => (r.name || "").toLowerCase().includes(query));
+            if (!hits.length) {
+              list.textContent = `No files match "${search.value.trim()}".`;
+              return;
+            }
+            hits.forEach((rec) =>
+              list.appendChild(
+                buildRow(rec, `in ${folderPath(idx, rec.parent)}`),
+              ),
+            );
+            return;
+          }
+
+          crumb.textContent = folderPath(idx, current);
+          const rows = childrenOf(idx, current);
+          if (!rows.length) {
+            list.textContent = current
+              ? "This folder is empty."
+              : "No files saved to the server yet.";
+            return;
+          }
+          rows.forEach((rec) => list.appendChild(buildRow(rec)));
+        }
+
+        search.addEventListener("input", render);
+
+        try {
+          await reload(controller.signal);
+        } catch (err) {
+          if (controller.signal.aborted && !document.body.contains(box)) return;
+          showError(err);
+          return;
+        } finally {
+          clearTimeout(timeout);
+        }
+        search.focus();
+      },
+      {
+        boxStyle: [
+          "width:92vw",
+          "max-width:1040px",
+          "height:86vh",
+          "max-height:680px",
+          "overflow:hidden",
+          "display:flex",
+          "flex-direction:column",
+        ],
+      },
+    );
   }
 
   // Opening a file: gDesigner.openDocument() is the same call "Open
