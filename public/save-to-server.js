@@ -1671,12 +1671,35 @@
   // getMainMenu().update() just once while building the menu. Without
   // this the server entries would keep whatever state they had at
   // startup, so going offline mid-session would leave them clickable.
+  // GMenu.update() only walks its own direct items, and GMenuItem.update()
+  // does not recurse into the submenu hanging off it -- so calling update()
+  // on the main menu refreshes the menu *bar* (File, Edit, ...) and never
+  // the entries inside File, which is where ours live. Walk it ourselves.
+  function updateMenuTree(menu, depth) {
+    if (!menu || typeof menu.getItemCount !== "function") return;
+    if (depth > 8) return; // cycles cannot happen, but never hang on one
+    for (let i = 0; i < menu.getItemCount(); i += 1) {
+      const item = menu.getItem(i);
+      if (!item) continue;
+      if (typeof item.update === "function") {
+        try {
+          item.update();
+        } catch (err) {
+          // One unrelated action throwing must not stop the walk.
+          console.warn("[save-to-server] menu item update threw", err);
+        }
+      }
+      if (typeof item.getMenu === "function") {
+        updateMenuTree(item.getMenu(), depth + 1);
+      }
+    }
+  }
+
   function refreshServerActionState() {
     try {
       const gd = window.gDesigner;
       if (gd && typeof gd.getMainMenu === "function") {
-        const menu = gd.getMainMenu();
-        if (menu && typeof menu.update === "function") menu.update();
+        updateMenuTree(gd.getMainMenu(), 0);
       }
     } catch (err) {
       console.warn("[save-to-server] menu refresh failed", err);
