@@ -299,7 +299,7 @@
     const el = document.createElement("div");
     const src = isFolder
       ? "assets/icon/folder.svg"
-      : "assets/icon/gravit-icon-local-file.svg";
+      : "assets/img/cloud/signup.svg";
     el.style.cssText = [
       "flex:none",
       "width:16px",
@@ -655,7 +655,7 @@
               counts,
             )}? Folders take everything inside them. This cannot be undone.`;
           }
-          if ((await confirmDialog(message, "Delete")) !== true) return;
+          if ((await confirmDialog(message, "Delete")) !== true) return false;
 
           const failures = [];
           for (const id of todo) {
@@ -675,6 +675,7 @@
             showToast(`Couldn't delete: ${failures.join(", ")}`, true);
           selected = new Set();
           await afterChange();
+          return true;
         }
 
         // ---- selection ----
@@ -700,12 +701,13 @@
           );
           if (!choice) return;
           await moveRecords(ids, choice.id);
-          selected = new Set();
-          render();
+          // The job is done, so drop back to normal browsing rather than
+          // leaving the dialog in a selecting state with nothing picked.
+          setSelecting(false);
         };
         bulkDelete.onclick = async () => {
           if (!selected.size) return;
-          await deleteRecords([...selected]);
+          if (await deleteRecords([...selected])) setSelecting(false);
         };
 
         newFolderBtn.onclick = async () => {
@@ -767,8 +769,10 @@
             dragIds = [];
             if (!canDropInto(idx, ids, targetId)) return;
             await moveRecords(ids, targetId);
-            if (selecting) selected = new Set();
-            render();
+            // Dragging the selection somewhere completes the bulk action
+            // just as the Move button does, so exit bulk mode too.
+            if (selecting) setSelecting(false);
+            else render();
           });
         }
 
