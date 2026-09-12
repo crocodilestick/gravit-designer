@@ -447,7 +447,13 @@
               body: JSON.stringify({ name: next }),
             });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            showToast(`Renamed to "${next}"`);
+            // Keep any open tab for this file in step with the new name.
+            const retitled = retitleOpenDocuments(rec.id, next);
+            showToast(
+              retitled
+                ? `Renamed to "${next}" (open tab updated)`
+                : `Renamed to "${next}"`,
+            );
             await afterChange();
           } catch (err) {
             showToast(
@@ -836,6 +842,42 @@
         app: "designer",
       }),
     }).then((r) => r.json());
+  }
+
+  // The server id a document is linked to, from either of the two
+  // sources resolveTargetFile() recognises below: the marker we set after
+  // a save, or a real storage item on a document reopened via Open Recent
+  // or the browse dialog.
+  function serverIdOf(doc) {
+    if (!doc) return null;
+    if (doc.__serverFile && doc.__serverFile.id) return doc.__serverFile.id;
+    const item = doc.getStorageItem && doc.getStorageItem();
+    return item && !item.__isFakeStorageItem && typeof item.getId === "function"
+      ? item.getId()
+      : null;
+  }
+
+  // Renaming on the server only changes the stored record; a document
+  // already open in a tab goes on showing its old title until something
+  // tells it otherwise. Documents are long-lived objects for the life of
+  // the tab, so the one linked to this id can be retitled in place.
+  //
+  // setTitle is the same setter the save path uses: it fires the Modified
+  // event the title UI already listens to, and its one storage-item call
+  // (setFileName) is a plain local field assignment, so this stays
+  // entirely client-side and cannot echo back as a second rename.
+  // Returns how many open documents were retitled.
+  function retitleOpenDocuments(fileId, name) {
+    const gd = window.gDesigner;
+    if (!gd || typeof gd.getDocuments !== "function") return 0;
+    let count = 0;
+    for (const doc of gd.getDocuments() || []) {
+      if (serverIdOf(doc) !== fileId) continue;
+      if (doc.__serverFile) doc.__serverFile.name = name;
+      if (typeof doc.setTitle === "function") doc.setTitle(name);
+      count += 1;
+    }
+    return count;
   }
 
   // Figures out which server file a save should target, prompting for a
