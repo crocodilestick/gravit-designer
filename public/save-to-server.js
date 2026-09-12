@@ -205,6 +205,19 @@
   // listFiles callers expect documents only.
   // ---------------------------------------------------------------
 
+  // navigator.onLine is only trustworthy in the negative: false means
+  // the browser has no network at all, while true merely means it has a
+  // link -- the server itself may still be unreachable. So this gates the
+  // UI, and every request path keeps its own error handling for the
+  // online-but-unreachable case.
+  function isOffline() {
+    return typeof navigator !== "undefined" && navigator.onLine === false;
+  }
+
+  function offlineMessage(action) {
+    return `You're offline, so ${action} isn't available. It will work again once you reconnect.`;
+  }
+
   const ROOT_LABEL = "All Projects";
   const SELECT_COLOR = "#ce3265";
   const DROP_COLOR = "#2f80ed";
@@ -489,7 +502,9 @@
           list.textContent = "";
           const msg = document.createElement("div");
           msg.style.cssText = "margin-bottom:12px;";
-          msg.textContent = controller.signal.aborted
+          msg.textContent = isOffline()
+            ? offlineMessage("browsing server files")
+            : controller.signal.aborted
             ? "Timed out listing server files."
             : `Failed to load files: ${err && err.message ? err.message : err}`;
           const retry = styledButton("Retry", true);
@@ -1274,7 +1289,9 @@
       .catch((err) => {
         console.error("[save-to-server] failed", err);
         showToast(
-          `Failed to save to server: ${err && err.message ? err.message : err}`,
+          isOffline()
+            ? `${offlineMessage("saving to the server")} Your work is still here — save locally if you need a copy now.`
+            : `Failed to save to server: ${err && err.message ? err.message : err}`,
           true,
         );
       });
@@ -1372,7 +1389,10 @@
       getStyleClass: () => null,
       getCategory: () => referenceAction.getCategory(),
       getGroup: () => referenceAction.getGroup(),
-      isEnabled: () => true,
+      // Every action this file adds talks to the server, so none of them
+      // can do anything offline. GMenuItem.update() re-reads this, and
+      // the online/offline listeners below trigger that refresh.
+      isEnabled: () => !isOffline(),
       isVisible: () => true,
       isAvailable: () => true,
       isPro: () => false,
@@ -1647,6 +1667,40 @@
   // only ever fires for a document that already has a known server file
   // (doc.__serverFile), so it never prompts for a name or creates a new
   // file — a brand-new, never-saved document is simply never autosaved.
+  // isEnabled() is only read when a menu item updates, and the app calls
+  // getMainMenu().update() just once while building the menu. Without
+  // this the server entries would keep whatever state they had at
+  // startup, so going offline mid-session would leave them clickable.
+  function refreshServerActionState() {
+    try {
+      const gd = window.gDesigner;
+      if (gd && typeof gd.getMainMenu === "function") {
+        const menu = gd.getMainMenu();
+        if (menu && typeof menu.update === "function") menu.update();
+      }
+    } catch (err) {
+      console.warn("[save-to-server] menu refresh failed", err);
+    }
+    // The welcome screen entry is our own DOM, so it is styled directly.
+    try {
+      const $ = window.$;
+      if (!$) return;
+      const option = $(".g-new-document-dialog .option.server-option");
+      if (!option.length) return;
+      const offline = isOffline();
+      option.css({
+        opacity: offline ? "0.45" : "",
+        "pointer-events": offline ? "none" : "",
+      });
+      option.attr("title", offline ? offlineMessage("opening from the server") : null);
+    } catch (err) {
+      console.warn("[save-to-server] welcome option refresh failed", err);
+    }
+  }
+
+  window.addEventListener("online", refreshServerActionState);
+  window.addEventListener("offline", refreshServerActionState);
+
   const AUTOSAVE_INTERVAL_MS = 3 * 60 * 1000;
   setInterval(() => {
     const doc =
@@ -1654,6 +1708,9 @@
         ? window.gDesigner.getActiveDocument()
         : null;
     if (!doc || !doc.__serverFile) return;
+    // Nothing to gain from trying, and it would put a failure toast on
+    // screen every few minutes for the whole time the network is down.
+    if (isOffline()) return;
     try {
       if (typeof doc.isModified === "function" && !doc.isModified()) return;
     } catch (err) {
