@@ -111,6 +111,37 @@ router.get("/file/:id/thumbnail", (req, res) => {
   res.send(thumb.buffer);
 });
 
+// ---------------------------------------------------------------------
+// Collaboration endpoints this server does not implement.
+//
+// The app calls these the moment a document with a real storage item is
+// opened -- usage, access registration, annotations, the notification
+// menu's file data, and both collaborator lists. Unrouted, each answered
+// with Express's HTML 404 page, which the client then handed to .json():
+// so every one produced a 404 *and* an "Unexpected token '<'" rejection,
+// several of them unhandled.
+//
+// These are not placeholders to fill in later. There is no collaboration
+// backend here and there is not going to be one, so the honest answer to
+// each is "nothing": an empty list of collaborators, no annotations, and
+// an acknowledgement for the write-only telemetry. The shapes come from
+// the client's own use of them -- both collaborator consumers call .map()
+// on the result, and GAnnotationsUtils round-trips annotations through
+// _prepareAnnotations, which returns the array it is given.
+// ---------------------------------------------------------------------
+
+// Write-only; the client logs and ignores whatever comes back.
+router.put("/file/:id/usage", jsonBody, (_req, res) => res.json({}));
+router.post("/file/:id/access", jsonBody, (_req, res) => res.json({}));
+
+// Feeds the annotations notification menu, which reads fields off the
+// result; an object with no notifications is the empty answer.
+router.put("/file/:id/data", jsonBody, (_req, res) => res.json({}));
+
+router.get("/file/:id/annotations", (_req, res) => res.json([]));
+router.get("/file/:id/collaborators", (_req, res) => res.json([]));
+router.get("/realtime/:id/collaborators", (_req, res) => res.json([]));
+
 // Turns the store's caller-mistake errors into 400s instead of letting
 // Express answer 500 with a stack.
 router.use((err, _req, res, next) => {
