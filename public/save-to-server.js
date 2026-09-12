@@ -206,6 +206,8 @@
   // ---------------------------------------------------------------
 
   const ROOT_LABEL = "All Projects";
+  const SELECT_COLOR = "#ce3265";
+  const DROP_COLOR = "#2f80ed";
 
   function fetchRecords(signal) {
     return fetch("/file?includeFolders=1", { signal }).then((r) => {
@@ -254,26 +256,97 @@
     return parts.length ? parts.join(" / ") : ROOT_LABEL;
   }
 
-  // Folder chooser for Move. Resolves { id } with a folder id or null for
-  // the root, or null when cancelled -- the two have to stay
-  // distinguishable, since "move to root" is a real choice.
-  function pickFolder(idx, movingRecord, title) {
-    // A folder cannot be moved inside itself or its own subtree; the
-    // server rejects it too, but offering it would be a trap.
-    const blocked = new Set();
-    if (movingRecord && movingRecord.folder) {
-      const queue = [movingRecord.id];
-      blocked.add(movingRecord.id);
-      while (queue.length) {
-        for (const child of childrenOf(idx, queue.shift())) {
-          if (child.folder) {
-            blocked.add(child.id);
-            queue.push(child.id);
-          }
+  // Every folder id at or below `id`. Used to keep a folder from being
+  // put inside itself, which would strand its whole subtree.
+  function subtreeFolderIds(idx, id) {
+    const out = new Set();
+    if (!id) return out;
+    const queue = [id];
+    out.add(id);
+    while (queue.length) {
+      for (const child of childrenOf(idx, queue.shift())) {
+        if (child.folder && !out.has(child.id)) {
+          out.add(child.id);
+          queue.push(child.id);
         }
       }
     }
+    return out;
+  }
 
+  // Whether every one of `ids` could legally live under `targetId`.
+  // Items already there are allowed through and skipped when moving, so
+  // a mixed selection is not blocked by the ones that need no work.
+  function canDropInto(idx, ids, targetId) {
+    if (!ids.length) return false;
+    for (const id of ids) {
+      if (id === targetId) return false;
+      const rec = idx.byId.get(id);
+      if (!rec) return false;
+      if (rec.folder && subtreeFolderIds(idx, id).has(targetId)) return false;
+    }
+    // Nothing would actually change.
+    return ids.some((id) => {
+      const rec = idx.byId.get(id);
+      return rec && (rec.parent || null) !== (targetId || null);
+    });
+  }
+
+  // The app's own folder and document icons, masked so they take the
+  // current text colour. The earlier text glyphs read as checkboxes,
+  // which is actively misleading now that real checkboxes exist.
+  function iconEl(isFolder) {
+    const el = document.createElement("div");
+    const src = isFolder
+      ? "assets/icon/folder.svg"
+      : "assets/icon/gravit-icon-local-file.svg";
+    el.style.cssText = [
+      "flex:none",
+      "width:16px",
+      "height:16px",
+      `background-color:${isFolder ? "#d8b25c" : "#8fa3b8"}`,
+      `-webkit-mask:url("${src}") no-repeat center/contain`,
+      `mask:url("${src}") no-repeat center/contain`,
+    ].join(";");
+    return el;
+  }
+
+  // Drop ids that are already inside another selected folder: deleting or
+  // moving the folder covers them, and acting on both would mean
+  // redundant requests against records that no longer exist.
+  function pruneRedundant(idx, ids) {
+    const selectedFolders = ids.filter((id) => {
+      const rec = idx.byId.get(id);
+      return rec && rec.folder;
+    });
+    const covered = new Set();
+    for (const fid of selectedFolders) {
+      const subtree = subtreeFolderIds(idx, fid);
+      for (const id of ids) {
+        if (id === fid) continue;
+        const rec = idx.byId.get(id);
+        if (!rec) continue;
+        let p = rec.parent || null;
+        const guard = new Set();
+        while (p && !guard.has(p)) {
+          guard.add(p);
+          if (subtree.has(p)) {
+            covered.add(id);
+            break;
+          }
+          const parentRec = idx.byId.get(p);
+          p = parentRec ? parentRec.parent || null : null;
+        }
+      }
+    }
+    return ids.filter((id) => !covered.has(id));
+  }
+
+  // Folder chooser for Move. Resolves { id } with a folder id or null for
+  // the root, or null when cancelled -- the two have to stay
+  // distinguishable, since "move to root" is a real choice.
+  function pickFolder(idx, movingIds, title) {
+    const ids = Array.isArray(movingIds) ? movingIds : [movingIds];
     return openModal((box, close) => {
       const h = document.createElement("div");
       h.textContent = title;
@@ -284,16 +357,20 @@
       list.style.cssText = "max-height:50vh;overflow:auto;margin-bottom:12px;";
       box.appendChild(list);
 
-      function addOption(label, id, depth, disabled) {
+      function addOption(label, id, depth) {
+        // Choices the server would reject, or that would change nothing,
+        // are shown greyed rather than hidden or left to fail on submit.
+        const disabled = !canDropInto(idx, ids, id);
         const row = document.createElement("div");
-        row.textContent = label;
-        row.style.cssText = `padding:7px 10px;padding-left:${
+        row.style.cssText = `display:flex;align-items:center;gap:8px;padding:7px 10px;padding-left:${
           10 + depth * 16
         }px;border-radius:4px;${
-          disabled
-            ? "color:#777;cursor:not-allowed;"
-            : "cursor:pointer;color:#eee;"
+          disabled ? "opacity:0.45;cursor:not-allowed;" : "cursor:pointer;"
         }`;
+        if (id !== null) row.appendChild(iconEl(true));
+        const text = document.createElement("span");
+        text.textContent = label;
+        row.appendChild(text);
         if (!disabled) {
           row.onmouseenter = () => {
             row.style.background = "rgba(255,255,255,0.08)";
@@ -306,19 +383,11 @@
         list.appendChild(row);
       }
 
-      addOption(ROOT_LABEL, null, 0, movingRecord && !movingRecord.parent);
-
+      addOption(ROOT_LABEL, null, 0);
       (function walk(parentId, depth) {
         for (const rec of childrenOf(idx, parentId)) {
           if (!rec.folder) continue;
-          const isCurrent =
-            movingRecord && (movingRecord.parent || null) === rec.id;
-          addOption(
-            rec.name || "Untitled",
-            rec.id,
-            depth,
-            blocked.has(rec.id) || isCurrent,
-          );
+          addOption(rec.name || "Untitled", rec.id, depth);
           walk(rec.id, depth + 1);
         }
       })(null, 1);
@@ -335,16 +404,33 @@
   function browseServerFiles() {
     return openModal(
       async (box, close, ctx) => {
-        const h = document.createElement("div");
-        h.style.cssText =
-          "display:flex;align-items:center;gap:12px;margin-bottom:12px;flex:none;";
+        const header = document.createElement("div");
+        header.style.cssText =
+          "display:flex;align-items:center;gap:8px;margin-bottom:12px;flex:none;";
         const title = document.createElement("div");
         title.textContent = "Open from Server";
         title.style.cssText = "font-size:15px;font-weight:600;flex:1;";
+        const selectBtn = styledButton("Select", false);
         const newFolderBtn = styledButton("New Folder", false);
-        h.appendChild(title);
-        h.appendChild(newFolderBtn);
-        box.appendChild(h);
+        header.appendChild(title);
+        header.appendChild(selectBtn);
+        header.appendChild(newFolderBtn);
+        box.appendChild(header);
+
+        // Bulk action bar, shown only while selecting.
+        const bulkBar = document.createElement("div");
+        bulkBar.style.cssText =
+          "display:none;align-items:center;gap:8px;margin-bottom:10px;padding:8px 10px;border-radius:6px;background:rgba(206,50,101,0.12);border:1px solid rgba(206,50,101,0.45);flex:none;";
+        const bulkCount = document.createElement("div");
+        bulkCount.style.cssText = "flex:1;font-size:12px;color:#eee;";
+        const bulkMove = styledButton("Move…", false);
+        const bulkDelete = styledButton("Delete", false);
+        const bulkClear = styledButton("Clear", false);
+        bulkBar.appendChild(bulkCount);
+        bulkBar.appendChild(bulkMove);
+        bulkBar.appendChild(bulkDelete);
+        bulkBar.appendChild(bulkClear);
+        box.appendChild(bulkBar);
 
         const search = document.createElement("input");
         search.type = "text";
@@ -360,7 +446,7 @@
           "display:flex;gap:14px;flex:1;min-height:0;align-items:stretch;";
         const treePane = document.createElement("div");
         treePane.style.cssText =
-          "flex:0 0 220px;overflow:auto;border:1px solid #3a3a3a;border-radius:6px;padding:6px;";
+          "flex:0 0 230px;overflow:auto;border:1px solid #3a3a3a;border-radius:6px;padding:6px;";
         const listPane = document.createElement("div");
         listPane.style.cssText =
           "flex:1;min-width:0;display:flex;flex-direction:column;min-height:0;";
@@ -378,14 +464,16 @@
 
         const footer = document.createElement("div");
         footer.style.cssText =
-          "display:flex;justify-content:flex-end;margin-top:12px;flex:none;";
+          "display:flex;align-items:center;gap:10px;margin-top:12px;flex:none;";
+        const hint = document.createElement("div");
+        hint.style.cssText = "flex:1;color:#777;font-size:11px;";
+        hint.textContent = "Drag files and folders onto a folder to move them.";
         const closeBtn = styledButton("Close", false);
         closeBtn.onclick = () => close(null);
+        footer.appendChild(hint);
         footer.appendChild(closeBtn);
         box.appendChild(footer);
 
-        // Abort the listing if the dialog is closed, and give up rather
-        // than sitting on "Loading..." forever.
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 15000);
         ctx.onClose = () => controller.abort();
@@ -393,6 +481,9 @@
         let idx = indexRecords([]);
         let current = null; // null = root
         const expanded = new Set();
+        let selecting = false;
+        let selected = new Set();
+        let dragIds = []; // ids being dragged right now
 
         function showError(err) {
           list.textContent = "";
@@ -413,9 +504,9 @@
         async function reload(signal) {
           const records = await fetchRecords(signal);
           idx = indexRecords(records);
-          // A folder deleted underneath us must not leave the view
-          // pointing at nothing.
           if (current && !idx.byId.has(current)) current = null;
+          // Drop anything that no longer exists from the selection.
+          selected = new Set([...selected].filter((id) => idx.byId.has(id)));
           render();
         }
 
@@ -433,6 +524,8 @@
             );
           }
         }
+
+        // ---- single-record actions ----
 
         async function doRename(rec) {
           const next = await promptForName(
@@ -463,80 +556,157 @@
           }
         }
 
-        async function doMove(rec) {
-          const choice = await pickFolder(
-            idx,
-            rec,
-            `Move "${rec.name || "Untitled"}" to`,
-          );
-          if (!choice) return;
-          try {
-            const res = await fetch(`/file/${rec.id}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ parent: choice.id }),
-            });
-            if (!res.ok) {
-              const body = await res.json().catch(() => null);
-              throw new Error(
-                body && body.error ? body.error : `HTTP ${res.status}`,
+        // ---- moving (shared by Move…, bulk move and drag & drop) ----
+
+        async function moveRecords(ids, parentId, labelForToast) {
+          const todo = pruneRedundant(idx, ids).filter((id) => {
+            const rec = idx.byId.get(id);
+            return rec && (rec.parent || null) !== (parentId || null);
+          });
+          if (!todo.length) return;
+          const failures = [];
+          for (const id of todo) {
+            try {
+              const res = await fetch(`/file/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ parent: parentId }),
+              });
+              if (!res.ok) {
+                const body = await res.json().catch(() => null);
+                throw new Error(
+                  body && body.error ? body.error : `HTTP ${res.status}`,
+                );
+              }
+            } catch (err) {
+              const rec = idx.byId.get(id);
+              failures.push(
+                `${rec ? rec.name : id}: ${
+                  err && err.message ? err.message : err
+                }`,
               );
             }
-            showToast(`Moved to "${folderPath(idx, choice.id)}"`);
-            await afterChange();
-          } catch (err) {
+          }
+          const moved = todo.length - failures.length;
+          if (moved) {
             showToast(
-              `Couldn't move: ${err && err.message ? err.message : err}`,
-              true,
+              `Moved ${moved} item${moved === 1 ? "" : "s"} to "${
+                labelForToast || folderPath(idx, parentId)
+              }"`,
             );
           }
+          if (failures.length) {
+            showToast(`Couldn't move ${failures.length}: ${failures[0]}`, true);
+          }
+          await afterChange();
         }
 
-        async function doDelete(rec) {
-          const name = rec.name || "Untitled";
-          // Ask the server what the delete would take, so a folder
-          // cannot quietly bin a subtree.
-          let info = null;
-          try {
-            const res = await fetch(`/file/${rec.id}/removal`);
-            if (res.ok) info = await res.json();
-          } catch (err) {
-            /* fall back to the plain wording below */
+        // ---- deleting (shared by Delete and bulk delete) ----
+
+        async function removalSummary(ids) {
+          let files = 0;
+          let folders = 0;
+          for (const id of ids) {
+            const rec = idx.byId.get(id);
+            if (!rec) continue;
+            if (rec.folder) folders += 1;
+            else files += 1;
+            try {
+              const res = await fetch(`/file/${id}/removal`);
+              if (!res.ok) continue;
+              const info = await res.json();
+              files += info.files || 0;
+              folders += info.folders || 0;
+            } catch (err) {
+              /* counts stay conservative if the probe fails */
+            }
           }
+          return { files, folders };
+        }
+
+        function describeCounts(counts) {
+          const bits = [];
+          if (counts.files)
+            bits.push(`${counts.files} file${counts.files === 1 ? "" : "s"}`);
+          if (counts.folders)
+            bits.push(
+              `${counts.folders} folder${counts.folders === 1 ? "" : "s"}`,
+            );
+          return bits.join(" and ");
+        }
+
+        async function deleteRecords(ids) {
+          const todo = pruneRedundant(idx, ids);
+          const counts = await removalSummary(todo);
+          const single = todo.length === 1 ? idx.byId.get(todo[0]) : null;
           let message;
-          if (info && info.folder && (info.files || info.folders)) {
-            const bits = [];
-            if (info.files)
-              bits.push(`${info.files} file${info.files === 1 ? "" : "s"}`);
-            if (info.folders)
-              bits.push(
-                `${info.folders} subfolder${info.folders === 1 ? "" : "s"}`,
-              );
-            message = `Delete "${name}" and everything inside it (${bits.join(
-              " and ",
-            )})? This cannot be undone.`;
-          } else if (rec.folder) {
-            message = `Delete the empty folder "${name}"?`;
+          if (single && !single.folder) {
+            message = `Delete "${single.name}" from the server? This permanently removes the file and cannot be undone.`;
+          } else if (single && single.folder) {
+            const inside = describeCounts({
+              files: counts.files,
+              folders: counts.folders - 1,
+            });
+            message = inside
+              ? `Delete "${single.name}" and everything inside it (${inside})? This cannot be undone.`
+              : `Delete the empty folder "${single.name}"?`;
           } else {
-            message = `Delete "${name}" from the server? This permanently removes the file and cannot be undone.`;
+            message = `Delete ${describeCounts(
+              counts,
+            )}? Folders take everything inside them. This cannot be undone.`;
           }
           if ((await confirmDialog(message, "Delete")) !== true) return;
-          try {
-            const res = await fetch(`/file/${rec.id}`, { method: "DELETE" });
-            // 404 means it is already gone, which is the desired end state.
-            if (!res.ok && res.status !== 404)
-              throw new Error(`HTTP ${res.status}`);
-            showToast(`Deleted "${name}"`);
-            await afterChange();
-          } catch (err) {
-            showToast(
-              `Couldn't delete "${name}": ${
-                err && err.message ? err.message : err
-              }`,
-              true,
-            );
+
+          const failures = [];
+          for (const id of todo) {
+            try {
+              const res = await fetch(`/file/${id}`, { method: "DELETE" });
+              // 404 means it is already gone, which is the desired end state.
+              if (!res.ok && res.status !== 404)
+                throw new Error(`HTTP ${res.status}`);
+            } catch (err) {
+              const rec = idx.byId.get(id);
+              failures.push(rec ? rec.name : id);
+            }
           }
+          const done = todo.length - failures.length;
+          if (done) showToast(`Deleted ${done} item${done === 1 ? "" : "s"}`);
+          if (failures.length)
+            showToast(`Couldn't delete: ${failures.join(", ")}`, true);
+          selected = new Set();
+          await afterChange();
         }
+
+        // ---- selection ----
+
+        function setSelecting(on) {
+          selecting = on;
+          if (!on) selected = new Set();
+          selectBtn.textContent = on ? "Done" : "Select";
+          render();
+        }
+        selectBtn.onclick = () => setSelecting(!selecting);
+        bulkClear.onclick = () => {
+          selected = new Set();
+          render();
+        };
+        bulkMove.onclick = async () => {
+          const ids = [...selected];
+          if (!ids.length) return;
+          const choice = await pickFolder(
+            idx,
+            pruneRedundant(idx, ids),
+            `Move ${ids.length} item${ids.length === 1 ? "" : "s"} to`,
+          );
+          if (!choice) return;
+          await moveRecords(ids, choice.id);
+          selected = new Set();
+          render();
+        };
+        bulkDelete.onclick = async () => {
+          if (!selected.size) return;
+          await deleteRecords([...selected]);
+        };
 
         newFolderBtn.onclick = async () => {
           const name = await promptForName("New Folder", "Create folder");
@@ -561,21 +731,62 @@
           }
         };
 
+        // ---- drag & drop ----
+
+        function makeDraggable(row, rec) {
+          row.draggable = true;
+          row.addEventListener("dragstart", (e) => {
+            // Dragging a row inside the selection moves the whole
+            // selection; dragging anything else moves just that row.
+            dragIds =
+              selecting && selected.has(rec.id) ? [...selected] : [rec.id];
+            e.dataTransfer.effectAllowed = "move";
+            // Firefox will not start a drag without payload data.
+            e.dataTransfer.setData("text/plain", dragIds.join(","));
+            row.style.opacity = "0.5";
+          });
+          row.addEventListener("dragend", () => {
+            dragIds = [];
+            row.style.opacity = "";
+          });
+        }
+
+        function makeDropTarget(el, targetId, highlight) {
+          el.addEventListener("dragover", (e) => {
+            if (!canDropInto(idx, dragIds, targetId)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            highlight(true);
+          });
+          el.addEventListener("dragleave", () => highlight(false));
+          el.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            highlight(false);
+            const ids = dragIds;
+            dragIds = [];
+            if (!canDropInto(idx, ids, targetId)) return;
+            await moveRecords(ids, targetId);
+            if (selecting) selected = new Set();
+            render();
+          });
+        }
+
+        // ---- rendering ----
+
         function treeRow(label, id, depth, hasKids) {
+          const isCurrent = (current || null) === id;
           const row = document.createElement("div");
-          row.style.cssText = `display:flex;align-items:center;gap:4px;padding:5px 6px;padding-left:${
+          const base = `display:flex;align-items:center;gap:4px;padding:5px 6px;padding-left:${
             6 + depth * 14
-          }px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;${
-            (current || null) === id
-              ? "background:rgba(47,128,237,0.35);"
-              : ""
-          }`;
+          }px;border-radius:4px;cursor:pointer;white-space:nowrap;overflow:hidden;`;
+          row.style.cssText =
+            base + (isCurrent ? `background:rgba(47,128,237,0.35);` : "");
           const twisty = document.createElement("span");
           twisty.style.cssText =
             "flex:none;width:12px;color:#999;font-size:10px;text-align:center;";
           twisty.textContent = hasKids ? (expanded.has(id) ? "▾" : "▸") : "";
           if (hasKids) {
-            twisty.style.cursor = "pointer";
             twisty.onclick = (e) => {
               e.stopPropagation();
               if (expanded.has(id)) expanded.delete(id);
@@ -588,20 +799,25 @@
           text.style.cssText =
             "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;";
           row.appendChild(twisty);
+          if (id !== null) row.appendChild(iconEl(true));
           row.appendChild(text);
           row.onclick = () => {
             current = id;
             if (id) expanded.add(id);
             render();
           };
-          if ((current || null) !== id) {
-            row.onmouseenter = () => {
-              row.style.background = "rgba(255,255,255,0.06)";
-            };
-            row.onmouseleave = () => {
-              row.style.background = "transparent";
-            };
-          }
+          row.onmouseenter = () => {
+            if (!isCurrent) row.style.background = "rgba(255,255,255,0.06)";
+          };
+          row.onmouseleave = () => {
+            if (!isCurrent) row.style.background = "transparent";
+          };
+          // The tree doubles as a set of drop targets, so a file can be
+          // moved somewhere that is not the folder currently open.
+          makeDropTarget(row, id, (on) => {
+            row.style.outline = on ? `2px solid ${DROP_COLOR}` : "";
+            row.style.outlineOffset = "-2px";
+          });
           return row;
         }
 
@@ -628,65 +844,95 @@
           const row = document.createElement("div");
           row.style.cssText =
             "padding:8px 10px;border-radius:4px;cursor:pointer;display:flex;align-items:center;gap:10px;";
+          const restore = () => {
+            row.style.background = selected.has(rec.id)
+              ? "rgba(206,50,101,0.18)"
+              : "transparent";
+          };
           row.onmouseenter = () => {
             row.style.background = "rgba(255,255,255,0.08)";
           };
-          row.onmouseleave = () => {
-            row.style.background = "transparent";
-          };
+          row.onmouseleave = restore;
 
-          const icon = document.createElement("div");
-          icon.textContent = rec.folder ? "▣" : "▢";
-          icon.style.cssText = "flex:none;color:#9aa;font-size:12px;";
+          if (selecting) {
+            const check = document.createElement("input");
+            check.type = "checkbox";
+            check.checked = selected.has(rec.id);
+            check.style.cssText = `flex:none;width:15px;height:15px;accent-color:${SELECT_COLOR};cursor:pointer;margin:0;`;
+            check.onclick = (e) => {
+              e.stopPropagation();
+              if (check.checked) selected.add(rec.id);
+              else selected.delete(rec.id);
+              renderBulkBar();
+              restore();
+            };
+            row.appendChild(check);
+          }
+
+          row.appendChild(iconEl(!!rec.folder));
 
           const nameEl = document.createElement("div");
           nameEl.textContent = name;
           nameEl.style.cssText =
             "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
           if (pathHint) {
-            const hint = document.createElement("span");
-            hint.textContent = `  ${pathHint}`;
-            hint.style.cssText = "color:#888;font-size:11px;";
-            nameEl.appendChild(hint);
+            const hintSpan = document.createElement("span");
+            hintSpan.textContent = `  ${pathHint}`;
+            hintSpan.style.cssText = "color:#888;font-size:11px;";
+            nameEl.appendChild(hintSpan);
           }
 
           const dateEl = document.createElement("div");
           dateEl.style.cssText =
             "color:#999;font-size:12px;white-space:nowrap;flex:none;";
           const when = rec.updated || rec.modifiedTime;
-          dateEl.textContent = rec.folder || !when
-            ? ""
-            : new Date(when).toLocaleString();
+          dateEl.textContent =
+            rec.folder || !when ? "" : new Date(when).toLocaleString();
 
-          const rename = rowButton("Rename", `Rename "${name}"`, false);
-          rename.onclick = (e) => {
-            e.stopPropagation();
-            doRename(rec);
-          };
-          const move = rowButton("Move", `Move "${name}" to another folder`, false);
-          move.onclick = (e) => {
-            e.stopPropagation();
-            doMove(rec);
-          };
-          const del = rowButton(
-            "Delete",
-            rec.folder
-              ? `Delete "${name}" and its contents`
-              : `Delete "${name}" from the server`,
-            true,
-          );
-          del.onclick = (e) => {
-            e.stopPropagation();
-            doDelete(rec);
-          };
-
-          row.appendChild(icon);
           row.appendChild(nameEl);
           row.appendChild(dateEl);
-          row.appendChild(rename);
-          row.appendChild(move);
-          row.appendChild(del);
+
+          // Per-row actions are noise while picking things in bulk.
+          if (!selecting) {
+            const rename = rowButton("Rename", `Rename "${name}"`, false);
+            rename.onclick = (e) => {
+              e.stopPropagation();
+              doRename(rec);
+            };
+            const move = rowButton(
+              "Move",
+              `Move "${name}" to another folder`,
+              false,
+            );
+            move.onclick = async (e) => {
+              e.stopPropagation();
+              const choice = await pickFolder(idx, [rec.id], `Move "${name}" to`);
+              if (choice) await moveRecords([rec.id], choice.id);
+            };
+            const del = rowButton(
+              "Delete",
+              rec.folder
+                ? `Delete "${name}" and its contents`
+                : `Delete "${name}" from the server`,
+              true,
+            );
+            del.onclick = (e) => {
+              e.stopPropagation();
+              deleteRecords([rec.id]);
+            };
+            row.appendChild(rename);
+            row.appendChild(move);
+            row.appendChild(del);
+          }
+
           row.onclick = () => {
+            if (selecting) {
+              // Whole row toggles, so the checkbox is not a tiny target.
+              if (selected.has(rec.id)) selected.delete(rec.id);
+              else selected.add(rec.id);
+              render();
+              return;
+            }
             if (rec.folder) {
               current = rec.id;
               expanded.add(rec.id);
@@ -696,11 +942,34 @@
             close(null);
             openServerFile(rec);
           };
+
+          makeDraggable(row, rec);
+          if (rec.folder) {
+            makeDropTarget(row, rec.id, (on) => {
+              row.style.outline = on ? `2px solid ${DROP_COLOR}` : "";
+              row.style.outlineOffset = "-2px";
+            });
+          }
+          restore();
           return row;
+        }
+
+        function renderBulkBar() {
+          const n = selected.size;
+          bulkBar.style.display = selecting ? "flex" : "none";
+          bulkCount.textContent = n
+            ? `${n} item${n === 1 ? "" : "s"} selected`
+            : "Select files and folders to move or delete them";
+          [bulkMove, bulkDelete, bulkClear].forEach((b) => {
+            b.disabled = !n;
+            b.style.opacity = n ? "1" : "0.45";
+            b.style.cursor = n ? "pointer" : "default";
+          });
         }
 
         function render() {
           renderTree();
+          renderBulkBar();
           const query = search.value.trim().toLowerCase();
           list.innerHTML = "";
 
@@ -733,6 +1002,23 @@
           }
           rows.forEach((rec) => list.appendChild(buildRow(rec)));
         }
+
+        // Dropping on empty space in the list moves into the folder that
+        // is currently open. Wired directly rather than through
+        // makeDropTarget, because the target here is `current` at drop
+        // time rather than a folder fixed when the row was built.
+        list.addEventListener("dragover", (e) => {
+          if (canDropInto(idx, dragIds, current)) e.preventDefault();
+        });
+        list.addEventListener("drop", async (e) => {
+          if (e.target !== list) return; // a row handled it
+          e.preventDefault();
+          const ids = dragIds;
+          dragIds = [];
+          if (!canDropInto(idx, ids, current)) return;
+          await moveRecords(ids, current);
+          render();
+        });
 
         search.addEventListener("input", render);
 
