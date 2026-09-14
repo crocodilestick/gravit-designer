@@ -138,10 +138,9 @@ gravit-designer/
 | -------------------- | ------------------------------------------------------ |
 | `npm start`          | Start the server on port 3100                          |
 | `npm run dev`        | Start with `--watch` for auto-reload                   |
-| `npm run build`      | Rebuild the dev bundle from reverse-engineered modules |
+| `npm run build`      | Reassemble the bundle from `reverse-engineering/src/` — refuses if `public/designer.browser.dev.js` has been edited (see below) |
 | `npm run icons`      | Generate SVG icon set                                  |
-| `npm run serve`      | Build + start in one command                           |
-| `npm run clean`      | Remove the generated dev bundle                        |
+| `npm run serve`      | Alias for `npm start`                                  |
 | `npm run electron`   | Launch as Electron desktop app (dev)                   |
 | `npm run dist:win`   | Build Windows installer + portable `.exe`              |
 | `npm run dist:linux` | Build Linux `.tar.gz` archive                          |
@@ -214,6 +213,19 @@ node rename-variables.cjs     # Improve minified variable names
 ```
 
 See [reverse-engineering/README.md](reverse-engineering/README.md) for the full toolkit documentation.
+
+> **`public/designer.browser.dev.js` is source, not build output.** It is
+> committed, and it carries patches that live nowhere else — the theme
+> default, dialog fixes, the Server menu strings, and the removal of
+> third-party analytics. `extract-all-modules.cjs` reads
+> `designer.browser.js`, the untouched reference copy, so
+> `reverse-engineering/src/modules/` has never contained those edits and a
+> rebuild would revert every one of them.
+>
+> `npm run build` therefore compares its output against the file on disk
+> and refuses when they differ. Override with `--force` only once the
+> module tree is genuinely the source again, and recover with
+> `git checkout -- public/designer.browser.dev.js`.
 
 ## Tech Stack
 

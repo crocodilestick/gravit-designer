@@ -75,6 +75,38 @@ function build() {
     // Assemble final bundle
     const bundle = `${runtime}[\n${modulesArrayCode}\n]);`;
     
+    // public/designer.browser.dev.js is committed source, not build
+    // output. It carries hand-written patches that exist nowhere else:
+    // the extractor reads designer.browser.js (the pristine reference
+    // copy), so src/modules/ has never contained them and a rebuild
+    // silently reverts the lot.
+    //
+    // Refuse rather than clobber. --force is there for the day the
+    // module tree is genuinely the source again.
+    const force = process.argv.includes('--force') ||
+                  process.env.ALLOW_BUNDLE_OVERWRITE === '1';
+    if (!force && fs.existsSync(OUTPUT_FILE)) {
+        const current = fs.readFileSync(OUTPUT_FILE, 'utf8');
+        if (current !== bundle) {
+            const diff = current.length - bundle.length;
+            console.error(`
+REFUSING to overwrite ${OUTPUT_FILE}
+
+  The file on disk differs from what this build produces
+  (${diff > 0 ? '+' : ''}${diff} bytes), so it contains changes that are not in
+  reverse-engineering/src/modules/ and would be lost.
+
+  That is expected: this bundle is edited directly and committed.
+  The extractor reads designer.browser.js, not this file, so the
+  module tree cannot round-trip these edits.
+
+  If you really mean it:  node reverse-engineering/build-bundle.cjs --force
+  Recover afterwards with: git checkout -- ${OUTPUT_FILE}
+`);
+            process.exit(1);
+        }
+    }
+
     // Write output
     fs.writeFileSync(OUTPUT_FILE, bundle);
     
