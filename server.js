@@ -6,6 +6,7 @@ const crypto = require("crypto");
 const { setupWebSocket } = require("./routes/ws");
 const userRoutes = require("./routes/user");
 const fileRoutes = require("./routes/files");
+const { router: authRoutes, withUser, SIGNUP_MODE } = require("./routes/auth");
 
 const app = express();
 const port = process.env.PORT || 3100;
@@ -109,6 +110,11 @@ app.use(
 app.use("/docs", express.static(path.join(__dirname, "docs")));
 
 // API routes
+// Identity first: every route below can read req.user, and the ones that
+// need a session say so themselves.
+app.use(withUser);
+app.use(authRoutes);
+
 app.get("/connection/test", (_req, res) => res.send("OK"));
 app.use(userRoutes);
 
@@ -187,4 +193,20 @@ setupWebSocket(server);
 
 server.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
+  const accounts = require("./lib/users").count();
+  if (accounts === 0) {
+    console.log(
+      "[auth] no accounts yet -- the first one created becomes the administrator",
+    );
+  } else {
+    console.log(`[auth] ${accounts} account(s); signup mode: ${SIGNUP_MODE}`);
+  }
+  if (SIGNUP_MODE === "open") {
+    // Worth saying out loud: this instance is also reachable on the LAN,
+    // where nothing else is gating who can register.
+    console.log(
+      "[auth] signup is OPEN -- anyone who can reach this server can create an account",
+    );
+    console.log("[auth] set SIGNUP_MODE=admin once your accounts exist");
+  }
 });

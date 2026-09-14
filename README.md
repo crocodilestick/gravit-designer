@@ -265,6 +265,8 @@ Gravit Designer ships with two themes out of the box:
 | ------------- | ------------ | ------------------------------------------- |
 | `PORT`        | `3100`       | Server port (set via environment variable) |
 | `PROJECTS_DIR`| `./projects` | Where design files are stored on disk      |
+| `SIGNUP_MODE` | `open`       | `open` lets anyone reachable create an account; `admin` restricts it to a signed-in administrator |
+| `SESSION_SECRET` | generated | Signs session cookies; written to `PROJECTS_DIR/.session-secret` on first run if unset |
 
 ```bash
 # Run on a custom port

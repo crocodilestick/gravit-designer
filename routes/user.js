@@ -1,4 +1,5 @@
 const { Router } = require("express");
+const users = require("../lib/users");
 const router = Router();
 
 const LANGUAGES = {
@@ -34,40 +35,6 @@ function resolveLocale(langOrLocale) {
   return "en";
 }
 
-const USER_PROFILE = {
-  id: "12345678",
-  email: "example@example.net",
-  email_verified: true,
-  email_expire: null,
-  login: null,
-  name: "Test User",
-  avatar:
-    "https://gravatar.com/avatar/2b6848a6719e6c2e6747d506d1ff57b3?s=64&d=retro",
-  admin: null,
-  flash: null,
-  last_seen: new Date().toISOString(),
-  app: "designer",
-  last_update: new Date().toISOString(),
-  stats: {},
-  address: "",
-  city: "",
-  zip: "",
-  state: "",
-  country: "",
-  trial_created: "2021-09-22T19:58:35.018Z",
-  trial_expire: "2099-10-07T19:58:35.018Z",
-  pro_created: "2021-09-22T19:58:35.018Z",
-  pro_expire: "2099-12-31T23:59:59.000Z",
-  created: "2021-09-22T19:58:32.748Z",
-  last_name: "",
-  runtime: "Browser",
-  user_type: "normal",
-  deactivated: false,
-  legacy: false,
-  guest_created: null,
-  guest_expire: null,
-  version: "3.15.0",
-};
 
 const SETTINGS = {
   notifications_disabled: false,
@@ -97,24 +64,45 @@ const SETTINGS = {
   },
 };
 
-router.get("/user/settings", (_req, res) => {
-  res.json(SETTINGS);
+function unauthorized(res) {
+  // The client treats this as "nobody is signed in" and offers the login
+  // dialog. It parses the body as JSON, so it has to be JSON.
+  return res.status(401).json({ message: "Not signed in." });
+}
+
+router.get("/user/settings", (req, res) => {
+  if (!req.user) return unauthorized(res);
+  res.json({ ...SETTINGS, ...(req.user.settings || {}) });
 });
 
+router.put("/user/settings", (req, res) => {
+  if (!req.user) return unauthorized(res);
+  const next = { ...(req.user.settings || {}), ...(req.body || {}) };
+  users.update(req.user.id, { settings: next });
+  res.json({ ...SETTINGS, ...next });
+});
+
+// Until this returned 401 the app believed everyone was the same signed-in
+// person, which is why it never asked anybody to log in.
 router.get("/user", (req, res) => {
-  const locale = resolveLocale(req.query.lang);
-  res.json({ ...USER_PROFILE, locale, settings: SETTINGS });
+  if (!req.user) return unauthorized(res);
+  const locale = resolveLocale(req.query.lang || req.user.locale);
+  res.json({ ...users.toProfile(req.user), locale, settings: SETTINGS });
 });
 
 router.put("/user", (req, res) => {
+  if (!req.user) return unauthorized(res);
   const locale = resolveLocale(req.body?.locale);
+  const patch = { locale };
+  if (req.body && typeof req.body.name === "string") patch.name = req.body.name;
+  const updated = users.update(req.user.id, patch) || req.user;
   res.json({
-    id: USER_PROFILE.id,
-    name: USER_PROFILE.name,
+    id: updated.id,
+    name: updated.name,
     locale,
-    email: USER_PROFILE.email,
-    version: USER_PROFILE.version,
-    runtime: USER_PROFILE.runtime,
+    email: updated.email,
+    version: users.PROFILE_TEMPLATE.version,
+    runtime: users.PROFILE_TEMPLATE.runtime,
     settings: { notifications_disabled: false },
   });
 });

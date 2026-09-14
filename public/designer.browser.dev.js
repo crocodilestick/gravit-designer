@@ -54791,7 +54791,13 @@ function (e, t, n) {
             new o.GLocaleKey("GEmbeddedLogin", "text.title")
           )),
           (document.title = this._newTitle),
-          gDesigner.isOffline())
+          // Always take the in-bundle GLoginDialog branch. The other one
+          // loads <origin>/pro/login in a cross-frame iframe -- that is
+          // Corel's hosted sign-in page, which this server does not have
+          // and is not going to. The local dialog talks to gApi on our
+          // own origin, which is exactly the auth this server implements.
+          // Was: gDesigner.isOffline()
+          !0)
         ) {
           this._frame = $("<div></div>")
             .addClass("cross-frame")
