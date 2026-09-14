@@ -10,6 +10,18 @@ services:
     environment:
       - PORT=3100
       - PROJECTS_DIR=/data/projects
+      # Who may create accounts:
+      #   open   anyone who can reach the server (default)
+      #   admin  only a signed-in administrator
+      # The first account is always allowed either way, and becomes the
+      # administrator -- so a fresh install can still be set up with this
+      # already set to admin.
+      # - SIGNUP_MODE=admin
+      #
+      # Signs the session cookies. Generated into PROJECTS_DIR on first
+      # run if unset; set it here to manage it yourself. Changing it signs
+      # everyone out.
+      # - SESSION_SECRET=change-me
     volumes:
       # Designs live here on the host, so they survive rebuilds.
       - ./projects:/data/projects
