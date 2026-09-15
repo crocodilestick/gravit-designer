@@ -1615,11 +1615,18 @@
     if (proto.__saveToServerWritePatched) return true;
     if (typeof proto.write !== "function" || typeof item.getId !== "function")
       return false;
+    // Keep the original: this replaces write() on the whole storage-item
+    // class, and documents are not the only thing that class writes. An
+    // SVG export goes through it too, with an item that has no server
+    // file id, and used to be told so as an error -- which is not a
+    // failure at all, just a write that was never ours to handle.
+    const originalWrite = proto.write;
     proto.write = function (bytes, onSuccess, onFail) {
-      const id = this.getId();
+      const id = typeof this.getId === "function" ? this.getId() : null;
       if (!id) {
-        onFail && onFail(new Error("Storage item has no server file id"));
-        return;
+        // Not one of our server files. The app's own implementation takes
+        // five arguments where this takes three, so forward the lot.
+        return originalWrite.apply(this, arguments);
       }
       uploadBytesToServer(id, bytes)
         .then(() => onSuccess && onSuccess())

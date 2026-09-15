@@ -30,20 +30,20 @@ router.post("/file", jsonBody, (req, res, next) => {
 // before a folder takes its subtree with it.
 router.get("/file/:id/removal", (req, res) => {
   const info = fileStore.describeRemoval(req.params.id);
-  if (!info) return res.status(404).json({ error: "not found" });
+  if (!info) return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
   res.json(info);
 });
 
 router.get(["/file/:id", "/file/:id/full"], (req, res) => {
   const file = fileStore.get(req.params.id);
-  if (!file) return res.status(404).json({ error: "not found" });
+  if (!file) return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
   res.json(file);
 });
 
 router.put("/file/:id", jsonBody, (req, res, next) => {
   try {
     const file = fileStore.update(req.params.id, req.body);
-    if (!file) return res.status(404).json({ error: "not found" });
+    if (!file) return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
     res.json(file);
   } catch (err) {
     next(err);
@@ -57,7 +57,7 @@ router.put("/file/:id", jsonBody, (req, res, next) => {
 // its confirmation.
 router.delete("/file/:id", (req, res) => {
   if (!fileStore.remove(req.params.id))
-    return res.status(404).json({ error: "not found" });
+    return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
   res.status(204).end();
 });
 
@@ -66,7 +66,7 @@ router.delete("/file/:id", (req, res) => {
 // id). It's a real HTTP method, so Express routes it directly.
 router.copy("/file/:id", jsonBody, (req, res) => {
   const file = fileStore.copy(req.params.id, req.body);
-  if (!file) return res.status(404).json({ error: "not found" });
+  if (!file) return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
   res.json(file);
 });
 
@@ -83,7 +83,7 @@ router.put("/file/:id/content", rawBody, (req, res) => {
     req.body,
     req.headers["content-type"],
   );
-  if (!file) return res.status(404).json({ error: "not found" });
+  if (!file) return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
   res.json(file);
 });
 
@@ -100,7 +100,7 @@ router.put("/file/:id/thumbnail", rawBody, (req, res) => {
     req.body,
     req.headers["content-type"],
   );
-  if (!file) return res.status(404).json({ error: "not found" });
+  if (!file) return res.status(404).json({ error: "not found", message: "That file no longer exists on the server." });
   res.json(file);
 });
 
@@ -134,9 +134,15 @@ router.get("/file/:id/thumbnail", (req, res) => {
 router.put("/file/:id/usage", jsonBody, (_req, res) => res.json({}));
 router.post("/file/:id/access", jsonBody, (_req, res) => res.json({}));
 
-// Feeds the annotations notification menu, which reads fields off the
-// result; an object with no notifications is the empty answer.
-router.put("/file/:id/data", jsonBody, (_req, res) => res.json({}));
+// Feeds the annotations notification menu. It does not just read the
+// result, it indexes an array with it:
+//   t[e.data.notifications_disabled || 0].checked = !0
+// so an empty object meant e.data was undefined and every call threw
+// "Cannot read properties of undefined". The menu has four entries and 0
+// is the default, so this is the honest "nothing is muted" answer.
+router.put("/file/:id/data", jsonBody, (_req, res) =>
+  res.json({ data: { notifications_disabled: 0 } }),
+);
 
 router.get("/file/:id/annotations", (_req, res) => res.json([]));
 router.get("/file/:id/collaborators", (_req, res) => res.json([]));
